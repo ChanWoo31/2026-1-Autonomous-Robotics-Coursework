@@ -1,0 +1,46 @@
+# --- ROS 2 공통 빌드 파일 ---
+build/
+install/
+log/
+
+# --- C++ 관련 제외 항목 ---
+# 컴파일된 이진 파일 및 라이브러리
+*.o
+*.obj
+*.so
+*.a
+*.la
+*.lo
+*.dll
+*.dylib
+*.exe
+*.out
+
+# 특정 실행 파일 이름 (확장자 없는 파일들)
+# 필요시 추가하거나, 아래 '확장자 없는 파일 무시' 규칙 사용
+
+# --- Python 관련 제외 항목 ---
+# 컴파일된 바이트코드
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# 가상환경 및 패키지 정보
+.venv/
+venv/
+ENV/
+*.egg-info/
+
+# --- IDE 및 시스템 설정 ---
+.vscode/
+.history/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- 기타 ---
+*.log
+compile_commands.json
