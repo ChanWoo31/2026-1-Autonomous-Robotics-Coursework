@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(lec01_pkg)
+project(motor_control_pkg)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -9,32 +9,17 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
-#build
-##publisher
-add_executable(ex01_publisher src/ex01_publisher.cpp)
-ament_target_dependencies(ex01_publisher rclcpp std_msgs)
-add_executable(cw01_publisher src/cw01_publisher.cpp)
-ament_target_dependencies(cw01_publisher rclcpp std_msgs)
-add_executable(prac01_pub src/prac01_pub.cpp)
-ament_target_dependencies(prac01_pub rclcpp std_msgs)
+add_executable(motor_control src/motor_control.cpp)
+ament_target_dependencies(motor_control rclcpp std_msgs geometry_msgs)
+add_executable(cw_motor_control src/cw_motor_control.cpp)
+ament_target_dependencies(cw_motor_control rclcpp std_msgs geometry_msgs sensor_msgs)
 
-## subscriber
-add_executable(cw01_subscriber src/cw01_subscriber.cpp)
-ament_target_dependencies(cw01_subscriber rclcpp std_msgs)
-add_executable(ex01_subscriber src/ex01_subscriber.cpp)
-ament_target_dependencies(ex01_subscriber rclcpp std_msgs)
-add_executable(prac01_sub src/prac01_sub.cpp)
-ament_target_dependencies(prac01_sub rclcpp std_msgs)
-
-#install
 install(TARGETS
-  ex01_publisher
-  ex01_subscriber
-  cw01_publisher
-  cw01_subscriber
-  prac01_pub
-  prac01_sub
+  motor_control
+  cw_motor_control
   DESTINATION lib/${PROJECT_NAME}
 )
 

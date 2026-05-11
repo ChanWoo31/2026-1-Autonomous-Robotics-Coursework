@@ -17,7 +17,6 @@ class cw01_subscriber : public rclcpp::Node
         );
     }
     private:
-    private:
     void cw01_topic_callback(const std_msgs::msg::Int32MultiArray::SharedPtr msg) const
     {
         int a = msg->data[0];
