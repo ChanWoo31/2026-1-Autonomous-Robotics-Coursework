@@ -131,7 +131,7 @@ class motor_control : public rclcpp::Node
 
         auto twist = geometry_msgs::msg::Twist();
 
-        float danger_threshold = 0.30f; //안전거리
+        float danger_threshold = 0.40f; //안전거리
 
         // 비례 제어
         if (dist_front < danger_threshold) {
