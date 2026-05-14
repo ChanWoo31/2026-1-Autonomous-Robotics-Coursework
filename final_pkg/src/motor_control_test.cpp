@@ -24,6 +24,12 @@
 
 using std::placeholders::_1;
 
+enum class RobotState {
+    RUNNING,        // 미로 주행 중
+    ESCAPING,       // 탈출구 발견, 2초간 직진 중
+    FINISHED        // 완주 완료 및 정지
+};
+
 class motor_control : public rclcpp::Node
 {
     public:
@@ -66,9 +72,13 @@ class motor_control : public rclcpp::Node
 
     float prev_error_ = 0.0f;
     rclcpp::Time last_time_;
+    rclcpp::Time escape_start_time_;
+    RobotState current_state_ = RobotState::RUNNING;
 
-    const float Kp_ = 1.2f;
-    const float Kd_ = 0.5f;
+    const float target_wall_dist_ = 0.4f;
+
+    const float Kp_ = 1.0f;
+    const float Kd_ = 0.1f;
 
     float get_sector_distance(const sensor_msgs::msg::LaserScan::SharedPtr& msg, int start_angle, int end_angle, bool use_min = false) const 
     {
@@ -100,19 +110,6 @@ class motor_control : public rclcpp::Node
         return (normalized_angle * ranges_size) / 360;
     }
 
-    // float get_safe_distance(const sensor_msgs::msg::LaserScan::SharedPtr& msg, int angle_deg) const 
-    // {
-    //     int max_idx = msg->ranges.size();
-    //     if (max_idx == 0) return 100.0f;
-        
-    //     int idx = get_index_from_angle(angle_deg, max_idx);
-    //     float dist = msg->ranges[idx];
-        
-    //     if (!std::isnormal(dist) || dist < msg->range_min || dist > msg->range_max) {
-    //         return 10.0f; 
-    //     }
-    //     return dist;
-    // }
 
     void set_velocity_callback(std_msgs::msg::Float64::SharedPtr _msg)
     {
@@ -152,6 +149,11 @@ class motor_control : public rclcpp::Node
             return;
         }
 
+        if (current_state_ == RobotState::FINISHED) {
+            stop_motors();
+            return;
+        }
+
         auto current_time = this->now();
         if (last_time_.nanoseconds() == 0) {
             last_time_ = current_time;
@@ -168,28 +170,64 @@ class motor_control : public rclcpp::Node
 
         auto twist = geometry_msgs::msg::Twist();
         float danger_dist = 0.35f;
+        float wall_threshold = 1.5f;
+
+        bool has_left_wall = (dist_left < wall_threshold);
+        bool has_right_wall = (dist_right < wall_threshold);
+
+        if (current_state_ == RobotState::ESCAPING) {
+            double escape_duration = (current_time - escape_start_time_).seconds();
+            if (escape_duration < 2.0) { // 2초간 직진
+                twist.linear.x = set_vel;
+                twist.angular.z = 0.0;
+                motor_pub_->publish(twist);
+            } else {
+                current_state_ = RobotState::FINISHED; // 2초 후 완주 상태로 전환
+                stop_motors();
+                RCLCPP_INFO(this->get_logger(), "Maze escape complete. Stopping robot.");
+            }
+            return; // 탈출 중에는 아래의 LiDAR 기반 조향 로직을 무시함
+        }
 
         if (dist_front < danger_dist) {
+            // [상태: 전방 장애물 회피]
             twist.linear.x = 0.0;
             float front_left = get_sector_distance(_msg, 15, 45, false);
             float front_right = get_sector_distance(_msg, 315, 345, false);
             twist.angular.z = (front_left > front_right) ? 1.5 : -1.5;
-
-            prev_error_=0.0f;
+            prev_error_ = 0.0f;
+        }
+        else if (!has_left_wall && !has_right_wall) {
+            // [상태 전환: 양쪽 벽이 모두 사라짐 -> 탈출 시작]
+            current_state_ = RobotState::ESCAPING;
+            escape_start_time_ = current_time;
+            
+            // 전환 즉시 직진 명령 하달
+            twist.linear.x = set_vel;
+            twist.angular.z = 0.0;
+            RCLCPP_INFO(this->get_logger(), "Open space detected. Initiating escape sequence.");
         }
         else {
+            // [상태: 미로 내부 주행]
             twist.linear.x = set_vel;
-            float error = dist_left - dist_right;
+            float error = 0.0f;
+
+            if (has_left_wall && has_right_wall) {
+                // 양쪽 벽 모두 존재: 중앙 정렬
+                error = dist_left - dist_right;
+            }
+            else if (has_left_wall && !has_right_wall) {
+                // 왼쪽 벽만 존재: 가상의 우측 벽 생성 (단일 벽 추종)
+                error = target_wall_dist_ - dist_left; 
+            }
+            else if (!has_left_wall && has_right_wall) {
+                // 오른쪽 벽만 존재: 가상의 좌측 벽 생성 (단일 벽 추종)
+                error = dist_right - target_wall_dist_; 
+            }
 
             float derivative = (error - prev_error_) / dt;
-
-            if (dist_left < 1.5 && dist_right < 1.5) {
-                twist.angular.z = (Kp_ * error) + (Kd_ * derivative);
-            }
-            else {
-                twist.angular.z = 0.0;
-            }
-            prev_error_=error;
+            twist.angular.z = (Kp_ * error) + (Kd_ * derivative);
+            prev_error_ = error;
         }
 
         motor_pub_->publish(twist);
@@ -216,6 +254,3 @@ int main(int argc, char * argv[])
     rclcpp::shutdown();
     return 0;
 }
-
-
-

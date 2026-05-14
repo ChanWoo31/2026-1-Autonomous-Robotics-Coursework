@@ -100,19 +100,6 @@ class motor_control : public rclcpp::Node
         return (normalized_angle * ranges_size) / 360;
     }
 
-    // float get_safe_distance(const sensor_msgs::msg::LaserScan::SharedPtr& msg, int angle_deg) const 
-    // {
-    //     int max_idx = msg->ranges.size();
-    //     if (max_idx == 0) return 100.0f;
-        
-    //     int idx = get_index_from_angle(angle_deg, max_idx);
-    //     float dist = msg->ranges[idx];
-        
-    //     if (!std::isnormal(dist) || dist < msg->range_min || dist > msg->range_max) {
-    //         return 10.0f; 
-    //     }
-    //     return dist;
-    // }
 
     void set_velocity_callback(std_msgs::msg::Float64::SharedPtr _msg)
     {
@@ -176,6 +163,10 @@ class motor_control : public rclcpp::Node
             twist.angular.z = (front_left > front_right) ? 1.5 : -1.5;
 
             prev_error_=0.0f;
+        }
+        else if (dist_left > 1 && dist_right > 1){
+            twist.linear.x = 0.0;
+            twist.angular.z = 0.0;
         }
         else {
             twist.linear.x = set_vel;
