@@ -150,8 +150,8 @@ class motor_control : public rclcpp::Node
 
         float dist_front = std::min(get_sector_distance(_msg, 0, 15, true), get_sector_distance(_msg, 345, 359, true));
 
-        float dist_left = get_sector_distance(_msg, 20, 70, false);
-        float dist_right = get_sector_distance(_msg, 290, 340, false);
+        float dist_left = get_sector_distance(_msg, 20, 60, false);
+        float dist_right = get_sector_distance(_msg, 280, 340, false);
 
         auto twist = geometry_msgs::msg::Twist();
         float danger_dist = 0.35f;
