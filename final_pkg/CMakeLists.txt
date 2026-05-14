@@ -18,10 +18,13 @@ add_executable(velocity_publisher src/velocity_publisher.cpp)
 ament_target_dependencies(velocity_publisher rclcpp std_msgs)
 add_executable(motor_control src/motor_control.cpp)
 ament_target_dependencies(motor_control rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
+add_executable(motor_control_test src/motor_control_test.cpp)
+ament_target_dependencies(motor_control_test rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
 
 install(TARGETS
   velocity_publisher
   motor_control
+  motor_control_test
   DESTINATION lib/${PROJECT_NAME}
 )
 
