@@ -60,6 +60,25 @@ class motor_control : public rclcpp::Node
 
     private:
 
+    int get_index_from_angle(int angle_deg, int ranges_size) const 
+    {
+        int normalized_angle = (angle_deg % 360 + 360) % 360;
+        return (normalized_angle * ranges_size) / 360;
+    }
+
+    float get_safe_distance(const sensor_msgs::msg::LaserScan::SharedPtr& msg, int angle_deg) const 
+    {
+        int max_idx = msg->ranges.size();
+        if (max_idx == 0) return 100.0f;
+        
+        int idx = get_index_from_angle(angle_deg, max_idx);
+        float dist = msg->ranges[idx];
+        
+        if (!std::isnormal(dist) || dist < msg->range_min || dist > msg->range_max) {
+            return 10.0f; 
+        }
+        return dist;
+    }
 
     void set_velocity_callback(std_msgs::msg::Float64::SharedPtr _msg)
     {
@@ -99,86 +118,40 @@ class motor_control : public rclcpp::Node
             return;
         }
 
-        float distance_45_left_back = _msg->ranges[270];
-        float distance_45_right_back = _msg->ranges[450];
-        float distance_45_left = _msg->ranges[90];
-        float distance_45_right = _msg->ranges[630];
-        float distance_0_front = _msg->ranges[0];
-        
-
-        auto twist = geometry_msgs::msg::Twist();
-
-        // 개수 확인.
         int max_index = _msg->ranges.size();
         if (max_index == 0) return;
 
-        int start_deg = std::min(distance_45_left, distance_45_right);
-        int end_deg = std::max(distance_45_left, distance_45_right);
+        float dist_front = get_safe_distance(_msg, 0);
+        float dist_left_45 = get_safe_distance(_msg, 45);
+        float dist_right_45 = get_safe_distance(_msg, 315);
 
-        int start_idx = start_deg * 2;
-        int end_idx = end_deg * 2;
+        auto twist = geometry_msgs::msg::Twist();
 
-        bool obstacle_detected = false;
+        float danger_threshold = 0.25f; //안전거리
 
-        int min_idx = -1;
-        float min_dist = 100.0f;
-
-        for (int i = start_idx; i <= end_idx; ++i)
-        {
-            int real_idx = (i % max_index + max_index) % max_index;
-
-            float distance = _msg->ranges[real_idx];
-
-            if (std::isnormal(distance) && distance >= _msg->range_min && distance <= _msg->range_max)
-            {
-                if (distance < min_dist) {
-                    min_dist = distance;
-                    min_idx = real_idx; // 화면 출력을 위해 진짜 인덱스 기억
-                }
-
-                if (distance < 0.2){
-                    obstacle_detected = true;
-                }
-            }
-        }
-
-        if (min_idx != -1){
-            float min_angle = min_idx / 2.0f;
-
-            if (min_angle > 180.0f) {
-                min_angle -= 360.0f;
-            }
-
-            RCLCPP_INFO_THROTTLE(
-                this->get_logger(),
-                *this->get_clock(),
-                1000,
-                "각도 %.1f도에서 최소거리 %.1fm", min_angle, min_dist
-            );
-        }
-
-        
-        
-
-        // ii. 창2에서 넣은 두 개 값 사이 각도에 거리 최소가 20cm 이내인 경우 (-100~80도(입력된 라이더 센서 각도 두개) 안에 20cm 있는 경우 모터 정지, 그 외 부분의 경우 바퀴 별 모터 속도 변경 (장애물을 피하는 방향으로)
-        if (obstacle_detected){
-            stop_motors();
-        }
-        else if (distance_45_left < 0.2){
-            twist.linear.x = set_vel;
-            twist.angular.z = 0.5;
-            motor_pub_->publish(twist);
-        }
-        else if (distance_45_right < 0.2){
-            twist.linear.x = set_vel;
-            twist.angular.z = -0.5;
-            motor_pub_->publish(twist);
-        }
+        // 비례 제어
+        if (dist_front < danger_threshold) {
+            // 정면이 막혔을 때 제자리 회전
+            twist.linear.x = 0.0;
+            twist.angular.z = (dist_left_45 > dist_right_45) ? 1.5 : -1.5;
+        } 
         else {
+            // 정면이 열려있을 때 주행하되, 좌우 벽과의 거리에 따라 조향각을 부드럽게 조정
             twist.linear.x = set_vel;
-            twist.angular.z = 0.0;
-            motor_pub_->publish(twist);
+            
+            // 에러 값: 왼쪽 벽과 오른쪽 벽의 거리 차이
+            // 이 차이가 0이 되도록(미로 중앙을 타도록) 각속도 제어
+            float error = dist_left_45 - dist_right_45;
+            
+            // 벽이 양쪽 다 감지되는 미로 내부일 경우에만 중앙 정렬 활성화 (P Gain: 1.0)
+            if (dist_left_45 < 1.0 && dist_right_45 < 1.0) {
+                twist.angular.z = 1.0 * error; 
+            } else {
+                twist.angular.z = 0.0;
+            }
         }
+
+        motor_pub_->publish(twist);
         
     }
     rclcpp::Subscription<std_msgs::msg::Float64>::SharedPtr set_velocity_subscriber_;
