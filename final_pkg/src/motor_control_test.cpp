@@ -194,7 +194,7 @@ class motor_control : public rclcpp::Node
             twist.linear.x = 0.0;
             float front_left = get_sector_distance(_msg, 15, 45, false);
             float front_right = get_sector_distance(_msg, 315, 345, false);
-            twist.angular.z = (front_left > front_right) ? 1.5 : -1.5;
+            twist.angular.z = (front_left > front_right) ? 1.3 : -1.3;
             prev_error_ = 0.0f;
         }
         else if (!has_left_wall && !has_right_wall) {
