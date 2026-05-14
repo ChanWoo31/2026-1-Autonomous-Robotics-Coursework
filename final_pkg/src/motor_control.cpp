@@ -67,8 +67,8 @@ class motor_control : public rclcpp::Node
     float prev_error_ = 0.0f;
     rclcpp::Time last_time_;
 
-    const float Kp_ = 1.2f;
-    const float Kd_ = 0.5f;
+    const float Kp_ = 1.0f;
+    const float Kd_ = 0.1f;
 
     float get_sector_distance(const sensor_msgs::msg::LaserScan::SharedPtr& msg, int start_angle, int end_angle, bool use_min = false) const 
     {
