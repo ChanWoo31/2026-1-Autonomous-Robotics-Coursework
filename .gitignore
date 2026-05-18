@@ -5,6 +5,8 @@ log/
 
 # 특정 패키지 폴더 제외
 sllidar_ros2/
+costmap_converter/
+teb_local_planner/
 
 # --- C++ 관련 제외 항목 ---
 # 컴파일된 이진 파일 및 라이브러리

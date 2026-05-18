@@ -13,6 +13,9 @@ find_package(geometry_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(nav2_msgs REQUIRED)
+find_package(rclcpp_action REQUIRED)
 
 add_executable(velocity_publisher src/velocity_publisher.cpp)
 ament_target_dependencies(velocity_publisher rclcpp std_msgs)
@@ -20,11 +23,14 @@ add_executable(motor_control src/motor_control.cpp)
 ament_target_dependencies(motor_control rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
 add_executable(motor_control_test src/motor_control_test.cpp)
 ament_target_dependencies(motor_control_test rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
+add_executable(maze_explorer src/maze_explorer.cpp)
+ament_target_dependencies(maze_explorer rclcpp nav_msgs geometry_msgs nav2_msgs rclcpp_action)
 
 install(TARGETS
   velocity_publisher
   motor_control
   motor_control_test
+  maze_explorer
   DESTINATION lib/${PROJECT_NAME}
 )
 
