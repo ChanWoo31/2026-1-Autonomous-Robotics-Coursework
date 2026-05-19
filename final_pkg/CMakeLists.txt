@@ -25,12 +25,16 @@ add_executable(motor_control_test src/motor_control_test.cpp)
 ament_target_dependencies(motor_control_test rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
 add_executable(maze_explorer src/maze_explorer.cpp)
 ament_target_dependencies(maze_explorer rclcpp nav_msgs geometry_msgs nav2_msgs rclcpp_action)
+add_executable(maze_runner src/maze_runner.cpp)
+ament_target_dependencies(maze_runner rclcpp geometry_msgs sensor_msgs nav_msgs tf2)
+
 
 install(TARGETS
   velocity_publisher
   motor_control
   motor_control_test
   maze_explorer
+  maze_runner
   DESTINATION lib/${PROJECT_NAME}
 )
 

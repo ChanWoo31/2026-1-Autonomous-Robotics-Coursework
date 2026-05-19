@@ -1,59 +1,11 @@
-amcl:
-  ros__parameters:
-    alpha1: 0.2
-    alpha2: 0.2
-    alpha3: 0.2
-    alpha4: 0.2
-    alpha5: 0.2
-    base_frame_id: "base_footprint"
-    beam_skip_distance: 0.5
-    beam_skip_error_threshold: 0.9
-    beam_skip_threshold: 0.3
-    do_beamskip: false
-    global_frame_id: "map"
-    lambda_short: 0.1
-    laser_likelihood_max_dist: 2.0
-    laser_max_range: 100.0
-    laser_min_range: -1.0
-    laser_model_type: "likelihood_field"
-    max_beams: 60
-    max_particles: 2000
-    min_particles: 500
-    odom_frame_id: "odom"
-    pf_err: 0.05
-    pf_z: 0.99
-    recovery_alpha_fast: 0.0
-    recovery_alpha_slow: 0.0
-    resample_interval: 1
-    robot_model_type: "nav2_amcl::DifferentialMotionModel"
-    save_pose_rate: 0.5
-    sigma_hit: 0.2
-    tf_broadcast: true
-    transform_tolerance: 0.5
-    update_min_a: 0.2
-    update_min_d: 0.25
-    z_hit: 0.5
-    z_max: 0.05
-    z_rand: 0.5
-    z_short: 0.05
-    scan_topic: scan
-    map_topic: map
-    set_initial_pose: false
-    always_reset_initial_pose: false
-    first_map_only: false
-    initial_pose:
-      x: 0.0
-      y: 0.0
-      z: 0.0
-      yaw: 0.0
 
 bt_navigator:
   ros__parameters:
     global_frame: map
     robot_base_frame: base_link
-    transform_tolerance: 0.5
+    transform_tolerance: 1.5
     filter_duration: 0.3
-    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml" # behavior trees location.
+    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     always_reload_bt_xml: false
     goal_blackboard_id: goal
@@ -115,35 +67,29 @@ controller_server:
     goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.05
       yaw_goal_tolerance: 0.25
-    # --- 여기서부터 핵심 TEB 플래너 설정 ---
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
-
-      # 로봇 설정 (버거 모델 적용)
-      max_vel_x: 0.22             # 최대 전진 속도
-      max_vel_x_backwards: 0.1    # 후진 속도 (미로 탈출 시 후진 허용)
-      max_vel_theta: 2.84         # 최대 회전 속도
-      acc_lim_x: 2.5              # 가속도 한계
-      acc_lim_theta: 3.2
-      min_turning_radius: 0.0     # 제자리 회전 가능 (Differential Drive)
+      max_vel_x: 0.18
+      max_vel_x_backwards: 0.10     # [수정] 탈출을 위해 후진 속도 소폭 상향
+      max_vel_theta: 2.84
+      acc_lim_x: 1.0
+      acc_lim_theta: 1.5
+      min_turning_radius: 0.0
       footprint_model:
         type: "circular"
-        radius: 0.105             # 버거 반지름
-
-      # 목표 도달 오차 허용 범위
-      xy_goal_tolerance: 0.2
-      yaw_goal_tolerance: 0.1
+        radius: 0.105
+      xy_goal_tolerance: 0.05
+      yaw_goal_tolerance: 3.14
       free_goal_vel: false
-
-      # 장애물 회피 설정 (미로의 핵심!)
-      min_obstacle_dist: 0.15     # 벽과 로봇 사이의 최소 거리 (아주 타이트하게 설정)
+      
+      # 장애물 회피 설정
+      min_obstacle_dist: 0.03       # [수정] 벽과 로봇 사이 거리 대폭 축소 (좁은 틈 돌파)
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 0.5
       obstacle_poses_affected: 30
-
-      # 궤적 최적화 설정
+      
       no_inner_iterations: 5
       no_outer_iterations: 4
       optimization_activate: True
@@ -154,11 +100,10 @@ controller_server:
       weight_acc_lim_x: 1.0
       weight_acc_lim_theta: 1.0
       weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 0.5     # 회전할 때 앞으로 가면서 돌지 않아도 되므로 이렇게 함. 1.0일 때는 앞으로 가면서 돌게끔.
+      weight_kinematics_forward_drive: 4.0  # 2에서 4가 적정인듯.
       weight_kinematics_turning_radius: 1.0
-      weight_optimaltime: 10.0    # 10.0: 속도 최우선! 미로를 빠르게 통과하는 핵심 파라미터
-      weight_obstacle: 50.0
-    # ------------------------------------
+      weight_optimaltime: 15.0 # 시간과 안전 체크.
+      weight_obstacle: 50.0 # 50 기준점으로. 벽을 얼마나 무서워할지 결정하는 부분.
 
 local_costmap:
   local_costmap:
@@ -170,13 +115,13 @@ local_costmap:
       rolling_window: true
       width: 3
       height: 3
-      resolution: 0.05
-      robot_radius: 0.1
+      resolution: 0.025             # [수정] 해상도를 2.5cm로 올려 얇은 벽 인식 향상
+      robot_radius: 0.09
       plugins: ["obstacle_layer", "voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.1
-        cost_scaling_factor: 10.0
+        inflation_radius: 0.05      # [수정] 비만 코스트맵 다이어트
+        cost_scaling_factor: 3.0    # [수정] 비용 증가 기울기를 완만하게 조정
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -203,9 +148,9 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 1.5
           raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
+          obstacle_max_range: 1.5
           obstacle_min_range: 0.0
       static_layer:
         map_subscribe_transient_local: true
@@ -218,9 +163,9 @@ global_costmap:
       publish_frequency: 1.0
       global_frame: map
       robot_base_frame: base_link
-      transform_tolerance: 0.5
-      robot_radius: 0.1
-      resolution: 0.05
+      transform_tolerance: 1.5
+      robot_radius: 0.09
+      resolution: 0.025             # [수정] 해상도 향상 (Local과 통일)
       track_unknown_space: true
       plugins: ["static_layer", "obstacle_layer", "voxel_layer", "inflation_layer"]
       obstacle_layer:
@@ -233,9 +178,9 @@ global_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 1.5
           raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
+          obstacle_max_range: 1.5
           obstacle_min_range: 0.0
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
@@ -253,9 +198,9 @@ global_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          raytrace_max_range: 3.0
+          raytrace_max_range: 1.5
           raytrace_min_range: 0.0
-          obstacle_max_range: 2.5
+          obstacle_max_range: 1.5
           obstacle_min_range: 0.0
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -263,8 +208,8 @@ global_costmap:
         transform_tolerance: 0.1
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.15
-        cost_scaling_factor: 10.0
+        inflation_radius: 0.05      # [수정] 다이어트 (Local과 통일)
+        cost_scaling_factor: 3.0    # [수정] (Local과 통일)
       always_send_full_costmap: true
 
 map_server:
@@ -297,15 +242,15 @@ behavior_server:
     cycle_frequency: 10.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "wait", "assisted_teleop"]
     spin:
-      plugin: "nav2_behaviors/Spin" # In Iron and older versions, "/" was used instead of "::"
+      plugin: "nav2_behaviors/Spin"
     backup:
-      plugin: "nav2_behaviors/BackUp" # In Iron and older versions, "/" was used instead of "::"
+      plugin: "nav2_behaviors/BackUp"
     drive_on_heading:
-      plugin: "nav2_behaviors/DriveOnHeading" # In Iron and older versions, "/" was used instead of "::"
+      plugin: "nav2_behaviors/DriveOnHeading"
     wait:
-      plugin: "nav2_behaviors/Wait" # In Iron and older versions, "/" was used instead of "::"
+      plugin: "nav2_behaviors/Wait"
     assisted_teleop:
-      plugin: "nav2_behaviors/AssistedTeleop" # In Iron and older versions, "/" was used instead of "::"
+      plugin: "nav2_behaviors/AssistedTeleop"
     local_frame: odom
     global_frame: map
     robot_base_frame: base_link
@@ -333,7 +278,7 @@ collision_monitor:
     cmd_vel_in_topic: "cmd_vel_smoothed"
     cmd_vel_out_topic: "cmd_vel"
     state_topic: "collision_monitor_state"
-    transform_tolerance: 0.5
+    transform_tolerance: 1.5
     source_timeout: 5.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
@@ -342,7 +287,7 @@ collision_monitor:
     polygons: ["PolygonStop", "PolygonSlow", "FootprintApproach"]
     PolygonStop:
       type: "circle"
-      radius: 0.1
+      radius: 0.04
       action_type: "stop"
       min_points: 4
       visualize: true
