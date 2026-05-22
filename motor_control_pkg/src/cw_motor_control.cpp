@@ -33,7 +33,7 @@ class cw_motor_control : public rclcpp::Node
     {
         // geometry_msgs::msg::Twist twist;
         auto twist = geometry_msgs::msg::Twist();
-        int total_points = _msg->ranges.size();
+        // int total_points = _msg->ranges.size();
         float distance_0 = _msg->ranges[0];
         float distance_45_right = _msg->ranges[685];
         float distance_45_left = _msg->ranges[45];
