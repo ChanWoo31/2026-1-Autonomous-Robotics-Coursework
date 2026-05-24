@@ -5,7 +5,7 @@ log/
 
 .agents
 .codex
-
+.md
 
 # 특정 패키지 폴더 제외
 sllidar_ros2/
