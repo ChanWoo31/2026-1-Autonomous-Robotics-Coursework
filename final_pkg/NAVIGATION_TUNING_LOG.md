@@ -239,16 +239,240 @@ ros2 run final_pkg maze_explorer
 
 | Constant | Default | 의미 |
 | --- | ---: | --- |
-| `BLACKLIST_RADIUS` | `0.40` | 실패한 goal 주변을 다시 선택하지 않는 반경 |
-| `GOAL_CLEARANCE` | `0.12` | goal 주변에 필요한 최소 빈 공간 |
-| `PATH_CLEARANCE` | `0.10` | BFS 경로 탐색 때 벽에서 떨어질 거리 |
-| `GOAL_STANDOFF` | `0.18` | frontier 바로 앞이 아니라 로봇 쪽으로 물러나는 거리 |
+| `BLACKLIST_RADIUS` | `0.15` | 실패한 goal 주변을 다시 선택하지 않는 반경 |
+| `GOAL_CLEARANCE` | `0.05` | goal 주변에 필요한 최소 빈 공간 |
+| `PATH_CLEARANCE` | `0.03` | BFS 경로 탐색 때 벽에서 떨어질 거리 |
+| `GOAL_STANDOFF` | `0.20` | frontier 바로 앞이 아니라 로봇 쪽으로 물러나는 거리 |
+| `GOAL_SEARCH_RADIUS` | `0.22` | frontier 후보 주변에서 더 안전한 goal cell을 찾는 반경 |
+| `PREFERRED_GOAL_CLEARANCE` | `0.12` | 가능하면 선호하는 goal 주변 여유 |
+| `PATH_DISTANCE_WEIGHT` | `1.0` | 실제 free cell 경로가 짧은 goal을 우선하는 가중치 |
+| `CLUSTER_SIZE_WEIGHT` | `0.03` | 작은 벽 옆 노이즈보다 큰 frontier를 선호하는 가중치 |
 | `MIN_GOAL_DISTANCE` | `0.35` | 너무 가까운 goal을 무시하는 거리 |
 | `START_LINE_MARGIN` | `0.05` | 시작선보다 뒤쪽 goal을 제외하는 기준 |
 | `BACKTRACK_GOAL_ALLOWANCE` | `0.25` | 지나온 길 뒤쪽 goal 허용 범위 |
 | `BACKTRACK_CANCEL_DISTANCE` | `0.35` | 주행 중 되돌아간다고 판단하는 거리 |
 | `STUCK_GOAL_IMPROVEMENT` | `0.03` | goal까지 이만큼 가까워져야 진행 중으로 판단 |
-| `STUCK_TIMEOUT` | `8.0` | 진행이 없을 때 goal을 포기하는 시간 |
+| `STUCK_TIMEOUT` | `12.0` | 진행이 없을 때 goal을 포기하는 시간 |
 | `MIN_FRONTIER_CLUSTER_SIZE` | `6` | 작은 frontier 노이즈 제거 기준 |
 
 ROS parameter화는 한 번 적용했지만, 사용자가 원해서 현재는 되돌렸다.
+
+## 좁은 통로 통과 튜닝
+
+좁은 통로에서 멈추는 증상 때문에 아래처럼 통로 통과 여유를 완화했다.
+
+- `maze_explorer.cpp`
+  - `PATH_CLEARANCE: 0.10 -> 0.08`
+  - `GOAL_CLEARANCE: 0.12 -> 0.10`
+- `nav2_params.yaml`
+  - TEB `min_obstacle_dist: 0.06 -> 0.03`
+  - TEB `weight_obstacle: 40.0 -> 25.0`
+  - local/global inflation `cost_scaling_factor: 8.0 -> 10.0`
+
+스크린샷 기준으로 아직 통로를 통과하지 못해 통과 우선 값으로 한 번 더 완화했다.
+
+- `maze_explorer.cpp`
+  - `PATH_CLEARANCE: 0.08 -> 0.06`
+  - `GOAL_CLEARANCE: 0.10 -> 0.08`
+- `nav2_params.yaml`
+  - TEB `max_vel_x: 0.22 -> 0.14`
+  - TEB `max_vel_x_backwards: 0.05 -> 0.10`
+  - TEB `footprint_model.radius: 0.11 -> 0.09`
+  - TEB `allow_init_with_backwards_motion: True`
+  - TEB `max_global_plan_lookahead_dist: 0.7`
+  - TEB `global_plan_prune_distance: 0.25`
+  - TEB `feasibility_check_lookahead_distance: 0.25`
+  - TEB `min_obstacle_dist: 0.03 -> 0.01`
+  - TEB `penalty_epsilon: 0.05 -> 0.02`
+  - TEB `weight_kinematics_forward_drive: 30.0 -> 5.0`
+  - TEB `weight_obstacle: 25.0 -> 12.0`
+  - velocity smoother `min_velocity.x: -0.05 -> -0.10`
+  - local/global `robot_radius: 0.105 -> 0.09`
+  - local/global `inflation_radius: 0.12 -> 0.09`
+  - local/global `cost_scaling_factor: 10.0 -> 15.0`
+
+주의:
+- 이 설정은 안전 여유를 줄이고 통과를 우선한다.
+- 벽에 스치면 `robot_radius`와 TEB `footprint_model.radius`를 `0.095` 또는 `0.10`으로 되돌린다.
+
+의도:
+- frontier 후보와 BFS가 좁은 통로를 도달 불가로 버리지 않게 한다.
+- TEB가 로봇 footprint 바깥에 과한 여유를 요구해서 통로 중앙에서 멈추는 현상을 줄인다.
+- inflation cost가 더 빨리 낮아지게 해서 global/local planner가 좁은 free space를 더 잘 사용하게 한다.
+
+## 통로가 지도상 막혀 보이는 경우
+
+스크린샷에서 통로 입구가 검은 점유 셀/두꺼운 wall로 닫혀 보여 추가 조정했다.
+
+- `mapper_params_online_async.yaml`
+  - `occupancy_threshold: 0.10 -> 0.25`
+- `nav2_params.yaml`
+  - global costmap에서 live scan `obstacle_layer` 제거
+  - global costmap은 `/map` 기반 static layer + inflation만 사용
+- `maze_explorer.cpp`
+  - `BLACKLIST_RADIUS: 0.40 -> 0.15`
+  - `PATH_CLEARANCE: 0.06 -> 0.03`
+  - `GOAL_CLEARANCE: 0.08 -> 0.05`
+
+의도:
+- SLAM이 약한 점유 확률까지 벽으로 내보내 통로가 닫히는 현상을 줄인다.
+- global plan이 live scan 잡음으로 막히지 않게 하고, 실제 장애물 회피는 local costmap에 맡긴다.
+- 한 번 실패한 goal 때문에 좁은 doorway 전체가 blacklist 되는 것을 막는다.
+
+## `goal failed` 재발 대응
+
+RViz에서 goal이 costmap의 벽/인플레이션 영역에 너무 붙어 실패하는 패턴이 보여 goal 선택 방식을 바꿨다.
+
+- `GOAL_STANDOFF: 0.18 -> 0.24`
+- `GOAL_SEARCH_RADIUS = 0.22` 추가
+- `PREFERRED_GOAL_CLEARANCE = 0.12` 추가
+- frontier에서 바로 계산한 한 점을 goal로 쓰지 않고, 주변 reachable free cell 중 벽에서 더 떨어진 cell로 보정한다.
+
+의도:
+- frontier 탐색 방향은 유지하면서 Nav2가 거부하기 쉬운 벽 옆 goal을 줄인다.
+- 좁은 통로에서는 통로 중앙에 가까운 cell을 goal로 잡게 한다.
+
+## 전진 속도 회복
+
+좁은 통로 대응 중 너무 느려진 주행감을 개선했다.
+
+- `nav2_params.yaml`
+  - `controller_frequency: 10.0 -> 15.0`
+  - TEB `max_vel_x: 0.14 -> 0.20`
+  - TEB `max_vel_x_backwards: 0.10 -> 0.08`
+  - TEB `acc_lim_x: 1.0 -> 1.4`
+  - TEB `acc_lim_theta: 1.5 -> 2.0`
+  - TEB `weight_kinematics_forward_drive: 5.0 -> 12.0`
+  - velocity smoother `max_velocity.x: 0.22 -> 0.20`
+  - velocity smoother `min_velocity.x: -0.10 -> -0.08`
+  - velocity smoother `max_accel.x: 1.0 -> 1.4`
+
+의도:
+- 목표 선택이 안정된 뒤에는 전진 속도를 회복한다.
+- 후진은 끼었을 때의 탈출용으로만 남기고 전진 주행을 더 선호한다.
+
+## goal이 옆 벽으로 찍히는 문제
+
+사용자가 말한 "앞으로 팍팍 못 감"은 속도보다 goal이 전방이 아니라 벽쪽 frontier로 찍히는 문제였다.
+
+- `maze_explorer.cpp`
+  - `/goal_pose` publisher를 `transient_local + reliable` QoS로 변경
+  - `FORWARD_PROGRESS_WEIGHT = 1.2` 추가
+  - `HEADING_ALIGNMENT_WEIGHT = 0.8` 추가
+  - `MIN_HEADING_ALIGNMENT = -0.15` 추가
+  - goal 점수에서 현재 로봇 진행 방향과 미로 안쪽 projection을 더 강하게 반영
+- `final_navigation.rviz`
+  - TF 표시를 `base_link`만 켜진 상태로 정리
+  - `/goal_pose` Pose display 추가
+
+의도:
+- 가까운 옆벽 frontier보다 전방으로 진행하는 frontier를 우선한다.
+- RViz를 나중에 켜도 마지막 `/goal_pose`가 보이게 한다.
+
+후속 수정:
+- 전방/yaw 기준을 hard filter로 넣으니 회전 중 후보가 사라져 더 실패했다.
+- `GOAL_STANDOFF: 0.24 -> 0.20`
+- `FORWARD_PROGRESS_WEIGHT: 1.2 -> 0.35`
+- `HEADING_ALIGNMENT_WEIGHT: 0.8 -> 0.20`
+- `MIN_HEADING_ALIGNMENT` 제외 필터 제거
+
+의도:
+- goal 후보를 지우지 않고, 전방 후보를 약하게 선호만 한다.
+
+재수정:
+- 가까운 후보를 너무 우선해서 벽쪽 goal이 계속 찍혔다.
+- yaw 기준 선호는 회전 중 로봇에게 맞지 않아 제거했다.
+- `MIN_GOAL_DISTANCE: 0.35 -> 0.55`
+- `PATH_DISTANCE_WEIGHT = 0.45`
+- `FORWARD_PROGRESS_WEIGHT: 0.35 -> 1.10`
+- `NEW_PROGRESS_WEIGHT = 0.60`
+- 선택 로그에 시작 방향 기준 진행값을 출력한다.
+
+의도:
+- 단순히 가까운 frontier가 아니라 시작 방향 기준으로 더 깊이 들어가는 frontier를 우선한다.
+- 작은 벽 옆 frontier보다 진행 가능한 큰 frontier 덩어리를 선호한다.
+
+## 코너에서 못 빠져나가는 문제
+
+RViz에서 로봇 주변 local/global costmap inflation이 통로를 너무 두껍게 먹어 TEB가 진행하지 못하는 패턴이 보였다.
+
+- `nav2_params.yaml`
+  - TEB `footprint_model.radius: 0.09 -> 0.075`
+  - TEB `min_obstacle_dist: 0.01 -> 0.0`
+  - TEB `weight_obstacle: 12.0 -> 6.0`
+  - local/global `robot_radius: 0.09 -> 0.075`
+  - local/global `inflation_radius: 0.09 -> 0.05`
+  - local/global `cost_scaling_factor: 15.0 -> 25.0`
+- `final_navigation.rviz`
+  - TF frame 목록에 wheel/caster/imu/base_scan을 명시적으로 false 처리
+  - TF 이름 표시 비활성화
+
+주의:
+- 이 설정은 안전 여유를 많이 줄인 통과 우선 설정이다.
+- 실제 로봇이 벽에 닿으면 `robot_radius`와 TEB radius를 `0.085~0.09`로 되돌린다.
+
+## 중간에서 이상하게 멈추는 문제
+
+시작 yaw 기준 `forwardProjection`으로 앞으로/뒤를 판단하는 로직이 미로의 꺾임에서 오판을 만들었다.
+
+- `maze_explorer.cpp`
+  - goal 선택에서 `START_LINE_MARGIN`, `BACKTRACK_GOAL_ALLOWANCE` projection 필터 제거
+  - watchdog의 `BACKTRACK_CANCEL_DISTANCE` 기반 goal 취소 제거
+  - `STUCK_TIMEOUT: 8.0 -> 12.0`
+  - 점수식을 path distance + clearance + cluster size 중심으로 단순화
+- `final_navigation.rviz`
+  - TF display 자체를 비활성화
+
+의도:
+- 미로가 꺾여도 정상적인 우회/회전을 되돌아감으로 오판하지 않는다.
+- 중간에 멋대로 goal을 취소해서 멈추는 상황을 줄인다.
+
+## 직진 가능 구간에서 후진하는 문제
+
+직진하면 통과할 수 있는 상황에서 TEB가 후진 trajectory를 고르는 문제가 있었다.
+
+- `nav2_params.yaml`
+  - TEB `max_vel_x_backwards: 0.08 -> 0.03`
+  - TEB `allow_init_with_backwards_motion: True -> False`
+  - TEB `weight_kinematics_forward_drive: 12.0 -> 100.0`
+  - velocity smoother `min_velocity.x: -0.08 -> 0.0`
+- `maze_explorer.cpp`
+  - 입구 바깥쪽 frontier만 막도록 `START_LINE_MARGIN` 필터를 goal 선택에 복원
+  - max-progress/backtrack cancel 로직은 계속 제거 상태 유지
+
+의도:
+- 직진 가능한 구간에서 후진으로 빠져나가는 해법을 억제한다.
+- 현재 미로 내부에서 회전/우회하는 것은 막지 않되, 입구 밖 goal은 다시 선택하지 않는다.
+
+## 2026-05-28 코너 정지 재발 대응
+
+RViz 스크린샷에서 로봇 footprint가 코너 inflation 영역에 붙고, global path가 벽 cost를 타면서 TEB가 유효한 local trajectory를 찾지 못하는 패턴이 다시 보였다.
+
+- `maze_explorer.cpp`
+  - `BLACKLIST_RADIUS: 0.40 -> 0.15`
+  - `GOAL_CLEARANCE: 0.12 -> 0.05`
+  - `PATH_CLEARANCE: 0.10 -> 0.03`
+  - `GOAL_STANDOFF: 0.18 -> 0.20`
+  - `STUCK_TIMEOUT: 8.0 -> 12.0`
+  - goal 선택의 `BACKTRACK_GOAL_ALLOWANCE` 필터 제거
+  - watchdog의 `BACKTRACK_CANCEL_DISTANCE` 기반 goal 취소 제거
+- `nav2_params.yaml`
+  - TEB/local/global radius `0.09 -> 0.075`
+  - local/global inflation `0.08 -> 0.05`
+  - local/global `cost_scaling_factor: 12.0 -> 25.0`
+  - TEB `min_obstacle_dist: 0.02 -> 0.0`
+  - TEB `weight_obstacle: 20.0 -> 6.0`
+  - TEB `max_vel_x_backwards: 0.05 -> 0.03`
+  - TEB `allow_init_with_backwards_motion: False`
+  - global costmap plugin에서 live scan `obstacle_layer` 제외
+  - velocity smoother 후진 속도 `min_velocity.x: -0.05 -> 0.0`
+- `mapper_params_online_async.yaml`
+  - `occupancy_threshold: 0.10 -> 0.25`
+
+의도:
+- 지도/전역 costmap이 좁은 코너를 막힌 길처럼 만들지 않게 한다.
+- 코너에서 정상적인 회전이나 짧은 자세 조정을 되돌아감으로 오판해 goal을 취소하지 않는다.
+- 직진 가능한 코너에서 TEB가 후진 궤적을 고르는 것을 억제한다.
+
+주의:
+- 이 값은 통과 우선이라 실제 로봇이 벽에 닿으면 `robot_radius`와 TEB `footprint_model.radius`를 `0.085~0.09`로 되돌린다.

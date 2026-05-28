@@ -64,10 +64,12 @@ private:
     struct Point2D { double x; double y; };
     std::vector<Point2D> blacklist_;
 
-    const double BLACKLIST_RADIUS = 0.40;             // 실패한 목표 주변은 다시 선택하지 않음
-    const double GOAL_CLEARANCE = 0.12;               // 목표 주변 최소 빈 공간
-    const double PATH_CLEARANCE = 0.10;               // 경로 탐색 때 벽에서 최소한 떨어질 거리
-    const double GOAL_STANDOFF = 0.18;                // 미지 영역 바로 앞이 아니라 조금 뒤를 목표로 잡음
+    const double BLACKLIST_RADIUS = 0.15;             // 좁은 통로 전체가 실패 영역으로 묶이지 않게 작게 유지
+    const double GOAL_CLEARANCE = 0.05;               // 좁은 통로에서도 goal 후보를 살릴 수 있는 최소 여유
+    const double PATH_CLEARANCE = 0.03;               // BFS가 좁은 doorway를 막힌 길로 오판하지 않게 완화
+    const double GOAL_STANDOFF = 0.24;                // 미지 영역 바로 앞이 아니라 조금 뒤를 목표로 잡음
+    const double GOAL_SEARCH_RADIUS = 0.22;           // frontier 후보 주변에서 더 안전한 goal cell을 찾는 반경
+    const double PREFERRED_GOAL_CLEARANCE = 0.12;     // 가능하면 이 정도는 벽에서 떨어진 goal을 선호
     const double MIN_GOAL_DISTANCE = 0.35;            // 너무 가까운 목표는 무시
     const double START_LINE_MARGIN = 0.05;            // 시작선보다 뒤쪽(입구 바깥쪽)은 목표로 잡지 않음
     const double BACKTRACK_GOAL_ALLOWANCE = 0.25;     // 지나온 길 뒤쪽 목표 허용 범위
@@ -187,6 +189,96 @@ private:
             }
         }
         return false;
+    }
+
+    double nearestObstacleDistance(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        int mx,
+        int my,
+        double max_distance)
+    {
+        const int width = static_cast<int>(map->info.width);
+        const int height = static_cast<int>(map->info.height);
+        const int radius_cells = std::max(1, static_cast<int>(std::ceil(max_distance / map->info.resolution)));
+
+        double best_distance = max_distance;
+        for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+            for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+                if (dx == 0 && dy == 0) {
+                    continue;
+                }
+
+                const int cx = mx + dx;
+                const int cy = my + dy;
+                const double distance = std::hypot(dx * map->info.resolution, dy * map->info.resolution);
+                if (distance > best_distance) {
+                    continue;
+                }
+
+                if (cx < 0 || cx >= width || cy < 0 || cy >= height) {
+                    best_distance = distance;
+                    continue;
+                }
+
+                const int value = map->data[cy * width + cx];
+                if (value >= 50) {
+                    best_distance = distance;
+                }
+            }
+        }
+
+        return best_distance;
+    }
+
+    bool findCenteredReachableGoalCell(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        const std::vector<int>& reachable_distances,
+        int seed_mx,
+        int seed_my,
+        int& goal_mx,
+        int& goal_my)
+    {
+        const int width = static_cast<int>(map->info.width);
+        const int height = static_cast<int>(map->info.height);
+        const int search_cells = std::max(1, static_cast<int>(std::ceil(GOAL_SEARCH_RADIUS / map->info.resolution)));
+
+        bool found = false;
+        double best_score = -std::numeric_limits<double>::max();
+
+        for (int dy = -search_cells; dy <= search_cells; ++dy) {
+            for (int dx = -search_cells; dx <= search_cells; ++dx) {
+                const double offset_distance = std::hypot(dx * map->info.resolution, dy * map->info.resolution);
+                if (offset_distance > GOAL_SEARCH_RADIUS) {
+                    continue;
+                }
+
+                const int mx = seed_mx + dx;
+                const int my = seed_my + dy;
+                if (mx <= 0 || mx >= width - 1 || my <= 0 || my >= height - 1) {
+                    continue;
+                }
+
+                const int index = my * width + mx;
+                if (reachable_distances[index] < 0 || map->data[index] != 0) {
+                    continue;
+                }
+
+                const double clearance = nearestObstacleDistance(map, mx, my, PREFERRED_GOAL_CLEARANCE);
+                if (clearance < GOAL_CLEARANCE) {
+                    continue;
+                }
+
+                const double score = clearance - (0.25 * offset_distance);
+                if (!found || score > best_score) {
+                    found = true;
+                    best_score = score;
+                    goal_mx = mx;
+                    goal_my = my;
+                }
+            }
+        }
+
+        return found;
     }
 
     bool isFrontierCell(const nav_msgs::msg::OccupancyGrid::SharedPtr& map, int mx, int my) {
@@ -360,21 +452,26 @@ private:
                         continue;
                     }
 
-                    const int candidate_index = candidate_my * width + candidate_mx;
-                    if (reachable_distances[candidate_index] < 0) {
+                    int goal_mx = 0;
+                    int goal_my = 0;
+                    if (!findCenteredReachableGoalCell(
+                            map,
+                            reachable_distances,
+                            candidate_mx,
+                            candidate_my,
+                            goal_mx,
+                            goal_my)) {
                         continue;
                     }
 
-                    // 목표 후보가 빈 공간이 아니거나 벽에 너무 가까우면 제외
-                    if (map->data[candidate_index] != 0 ||
-                        hasObstacleWithin(map, candidate_mx, candidate_my, GOAL_CLEARANCE)) {
-                        continue;
-                    }
+                    const int goal_index = goal_my * width + goal_mx;
+                    const double goal_wx = origin_x + (goal_mx + 0.5) * resolution;
+                    const double goal_wy = origin_y + (goal_my + 0.5) * resolution;
 
                     // 이미 실패했던 목표 근처면 또 보내지 않음
                     bool is_blacklisted = false;
                     for (const auto& bp : blacklist_) {
-                        if (std::hypot(candidate_wx - bp.x, candidate_wy - bp.y) < BLACKLIST_RADIUS){
+                        if (std::hypot(goal_wx - bp.x, goal_wy - bp.y) < BLACKLIST_RADIUS){
                             is_blacklisted = true;
                             break;
                         }
@@ -384,13 +481,13 @@ private:
                     }
 
                     // 목표 방향은 frontier 쪽을 바라보게 설정
-                    const double target_yaw = std::atan2(frontier_wy - candidate_wy, frontier_wx - candidate_wx);
+                    const double target_yaw = std::atan2(frontier_wy - goal_wy, frontier_wx - goal_wx);
                     double angle_diff = std::abs(std::atan2(
                         std::sin(target_yaw - robot_yaw_),
                         std::cos(target_yaw - robot_yaw_)));
 
                     // 시작 방향 기준 뒤쪽은 입구 바깥쪽으로 보고 완전히 제외
-                    const double projection = forwardProjection(candidate_wx, candidate_wy);
+                    const double projection = forwardProjection(goal_wx, goal_wy);
 
                     if (projection < START_LINE_MARGIN) {
                         continue;
@@ -402,7 +499,7 @@ private:
                     }
 
                     // 기본 점수는 실제 free cell을 따라가는 경로거리가 짧을수록 유리함
-                    double path_distance = reachable_distances[candidate_index] * resolution;
+                    double path_distance = reachable_distances[goal_index] * resolution;
                     double score = path_distance;
 
                     // 같은 거리라면 미로 안쪽으로 더 전진하는 목표를 선호
@@ -416,8 +513,8 @@ private:
                     // 점수가 가장 낮은 후보를 최종 목표로 선택
                     if (score < min_distance){
                         min_distance = score;
-                        best_mx = candidate_mx;
-                        best_my = candidate_my;
+                        best_mx = goal_mx;
+                        best_my = goal_my;
                         best_yaw = target_yaw;
                         frontier_found = true;
                     }
