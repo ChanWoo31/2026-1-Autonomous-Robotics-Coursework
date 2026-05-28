@@ -33,32 +33,32 @@ controller_server:
     goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.06
       yaw_goal_tolerance: 3.14  # 프론티어 탐색 시 방향은 중요하지 않음
       
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
       max_vel_x: 0.20           # 좁은 통로 대응 후 전진 속도 회복
-      max_vel_x_backwards: 0.08 # 끼었을 때의 탈출용 후진만 허용
+      max_vel_x_backwards: 0.03 # 끼었을 때의 탈출용 후진만 허용
       max_vel_theta: 2.5
       acc_lim_x: 1.4
       acc_lim_theta: 2.0
       min_turning_radius: 0.0   # 제자리 회전 완벽 지원
-      allow_init_with_backwards_motion: True
-      max_global_plan_lookahead_dist: 0.7
-      global_plan_prune_distance: 0.25
-      feasibility_check_lookahead_distance: 0.25
+      allow_init_with_backwards_motion: False
+      max_global_plan_lookahead_dist: 0.45
+      global_plan_prune_distance: 0.20
+      feasibility_check_lookahead_distance: 0.20
       
       footprint_model:
         type: "circular"
-        radius: 0.09            # 좁은 통로 통과 우선 가상 반경
+        radius: 0.075            # 좁은 통로 통과 우선 가상 반경
         
-      xy_goal_tolerance: 0.15
+      xy_goal_tolerance: 0.06
       yaw_goal_tolerance: 3.14
       free_goal_vel: false
       
       # 장애물 회피 설정
-      min_obstacle_dist: 0.01   # footprint 바깥 여유를 최소화해 좁은 통로가 닫히지 않게 함
+      min_obstacle_dist: 0.015   # footprint 바깥 여유를 최소화해 좁은 통로가 닫히지 않게 함
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 0.5
       obstacle_poses_affected: 15 # 최적화 연산량 감소 및 빠른 반응 속도 확보
@@ -75,10 +75,10 @@ controller_server:
       weight_acc_lim_x: 1.0
       weight_acc_lim_theta: 1.0
       weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 12.0   # 후진은 남기되 전진 주행을 더 선호
+      weight_kinematics_forward_drive: 40.0   # 후진은 남기되 전진 주행을 더 선호
       weight_kinematics_turning_radius: 1.0
       weight_optimaltime: 10.0 
-      weight_obstacle: 12.0                   # 좁은 길 통과를 위해 과한 벽 회피를 완화
+      weight_obstacle: 10.0                   # 좁은 길 통과를 위해 과한 벽 회피를 완화
 
 local_costmap:
   local_costmap:
@@ -91,13 +91,13 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.02
-      robot_radius: 0.09          # TEB footprint와 일관되게 좁은 통로 통과 우선 반경 사용
+      robot_radius: 0.075          # TEB footprint와 일관되게 좁은 통로 통과 우선 반경 사용
       plugins: ["obstacle_layer", "inflation_layer"] # 연산량 확보를 위해 voxel 제외
       
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.09      # 좁은 통로가 코스트맵 상에서 닫히지 않도록 제한
-        cost_scaling_factor: 15.0
+        inflation_radius: 0.05      # 좁은 통로가 코스트맵 상에서 닫히지 않도록 제한
+        cost_scaling_factor: 25.0
         
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -121,7 +121,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       transform_tolerance: 1.5
-      robot_radius: 0.09
+      robot_radius: 0.075
       resolution: 0.02
       track_unknown_space: true
       plugins: ["static_layer", "inflation_layer"]
@@ -145,8 +145,8 @@ global_costmap:
         
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.09
-        cost_scaling_factor: 15.0
+        inflation_radius: 0.08
+        cost_scaling_factor: 12.0
       always_send_full_costmap: true
 
 planner_server:
@@ -189,7 +189,7 @@ velocity_smoother:
     scale_velocities: false
     feedback: "OPEN_LOOP"
     max_velocity: [0.20, 0.0, 2.5]
-    min_velocity: [-0.08, 0.0, -2.5]
+    min_velocity: [-0.03, 0.0, -2.5]
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
     max_accel: [1.4, 0.0, 2.5]
