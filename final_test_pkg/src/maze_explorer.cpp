@@ -139,11 +139,17 @@ private:
     const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.105;
     const double KEEP_MOVING_BLACKLIST_RADIUS = 0.08;
     const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.25;
+    const double OPEN_SPACE_RADIUS = 0.40;
+    const double OPEN_SPACE_MIN_RATIO = 0.40;
+    const double FORWARD_ALIGNMENT_WEIGHT = 1.20;
+    const double OPEN_SPACE_WEIGHT = 1.80;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
     const double STUCK_TIMEOUT = 5.0;
-    const double ESCAPE_BACKUP_SPEED = 0.055;
-    const double ESCAPE_BACKUP_DURATION = 1.0;
+    const double ESCAPE_BACKUP_SPEED = 0.040;
+    const double ESCAPE_BACKUP_DURATION = 0.40;
+    const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
+    const int ESCAPE_BACKUP_MIN_FAILURES = 4;
 
     const double ESCAPE_MIN_DISTANCE = 0.22;
     const double ESCAPE_MAX_DISTANCE = 0.55;
@@ -443,6 +449,55 @@ private:
         }
 
         return best_distance;
+    }
+
+    double openSpaceRatio(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        int mx,
+        int my,
+        double radius)
+    {
+        const int width = static_cast<int>(map->info.width);
+        const int height = static_cast<int>(map->info.height);
+        const int radius_cells = std::max(
+            1,
+            static_cast<int>(std::ceil(radius / map->info.resolution))
+        );
+
+        int open_count = 0;
+        int total_count = 0;
+
+        for (int dy = -radius_cells; dy <= radius_cells; ++dy) {
+            for (int dx = -radius_cells; dx <= radius_cells; ++dx) {
+                const double distance = std::hypot(
+                    dx * map->info.resolution,
+                    dy * map->info.resolution
+                );
+
+                if (distance > radius) {
+                    continue;
+                }
+
+                const int cx = mx + dx;
+                const int cy = my + dy;
+
+                if (cx < 0 || cx >= width || cy < 0 || cy >= height) {
+                    continue;
+                }
+
+                total_count++;
+
+                if (map->data[cy * width + cx] == 0) {
+                    open_count++;
+                }
+            }
+        }
+
+        if (total_count == 0) {
+            return 0.0;
+        }
+
+        return static_cast<double>(open_count) / static_cast<double>(total_count);
     }
 
     bool findCenteredReachableGoalCell(
@@ -802,9 +857,11 @@ private:
                     !makeEscapeGoal(latest_map_, next_goal)) {
                     RCLCPP_WARN(
                         this->get_logger(),
-                        "현재 costmap 기준 goal이 없습니다. 벽에서 살짝 후진한 뒤 다시 탐색합니다."
+                        "현재 costmap 기준 goal이 없습니다. 0.5초 후 다시 탐색합니다."
                     );
-                    startEscapeRecovery("no reachable Nav2 goal");
+                    if (canUseBackupRecovery()) {
+                        startEscapeRecovery("no reachable Nav2 goal");
+                    }
                     return false;
                 }
             }
@@ -833,6 +890,13 @@ private:
             ESCAPE_BACKUP_SPEED,
             reason.c_str()
         );
+    }
+
+    bool canUseBackupRecovery() const
+    {
+        return consecutive_goal_failures_ >= ESCAPE_BACKUP_MIN_FAILURES &&
+               max_start_distance_ >= ESCAPE_BACKUP_MIN_START_DISTANCE &&
+               distanceFromStart(robot_x_, robot_y_) >= 0.45;
     }
 
     void escapeTimerCallback()
@@ -1002,20 +1066,25 @@ private:
                         std::sin(yaw - robot_yaw_),
                         std::cos(yaw - robot_yaw_)
                     ));
+                    const double forward_alignment = std::cos(angle_diff);
+                    const double open_ratio = openSpaceRatio(map, mx, my, OPEN_SPACE_RADIUS);
 
                     const double step_error = std::abs(path_distance - target_step);
 
                     double score = 0.0;
                     score += 0.55 * step_error;
-                    score += 0.20 * angle_diff;
+                    score += 0.75 * angle_diff;
                     score -= 2.10 * start_path_distance;
                     score -= 1.50 * projection;
-                    score -= 0.70 * clearance;
-                    score -= 0.70 * bottleneck;
+                    score -= 1.25 * clearance;
+                    score -= 1.00 * bottleneck;
+                    score -= FORWARD_ALIGNMENT_WEIGHT * forward_alignment;
+                    score -= OPEN_SPACE_WEIGHT * open_ratio;
                     score += WALL_CLEARANCE_PENALTY_WEIGHT *
                              std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
                     score += WALL_CLEARANCE_PENALTY_WEIGHT *
                              std::max(0.0, WALL_CLEARANCE_COMFORT - bottleneck);
+                    score += 4.0 * std::max(0.0, OPEN_SPACE_MIN_RATIO - open_ratio);
 
                     // Nav2 global planner가 통로를 막힌 곳으로 판단하지 않게
                     // 좁은 병목 후보는 keep-moving goal에서 강하게 밀어낸다.
@@ -1746,7 +1815,7 @@ private:
 
                 consecutive_goal_failures_++;
                 addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-                should_escape_after_result = consecutive_goal_failures_ >= 2;
+                should_escape_after_result = canUseBackupRecovery();
             } else {
                 RCLCPP_INFO(
                     this->get_logger(),
@@ -1762,7 +1831,7 @@ private:
         } else if (canceling_goal_) {
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
             consecutive_goal_failures_++;
-            should_escape_after_result = consecutive_goal_failures_ >= 2;
+            should_escape_after_result = canUseBackupRecovery();
         } else {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -1774,7 +1843,7 @@ private:
             consecutive_goal_failures_++;
             // 같은 실패 goal 반복만 짧게 막고, local fallback은 필요하면 blacklist를 무시한다.
             addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-            should_escape_after_result = consecutive_goal_failures_ >= 2;
+            should_escape_after_result = canUseBackupRecovery();
         }
 
         active_goal_handle_.reset();

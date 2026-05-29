@@ -63,7 +63,7 @@ controller_server:
       free_goal_vel: true
       
       # 장애물 회피 설정
-      min_obstacle_dist: 0.045    # footprint를 키우고 추가 여유는 통로 통과 가능하게 유지
+      min_obstacle_dist: 0.045    # 좁은 통로 통과성을 우선하고, 실제 접촉은 safety filter에서 감속
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 0.5
       obstacle_poses_affected: 18 # 최적화 연산량 감소 및 빠른 반응 속도 확보
@@ -249,9 +249,10 @@ cmd_vel_safety_filter:
     front_angle_offset: 3.14159
     front_stop: 0.09
     front_slow: 0.24
-    side_stop: 0.108
+    side_stop: 0.098
+    side_slow: 0.135
     front_half_width_deg: 14.0
     wide_half_width_deg: 34.0
-    min_creep_linear: 0.045
+    min_creep_linear: 0.050
     command_timeout: 0.35
     scan_timeout: 0.60

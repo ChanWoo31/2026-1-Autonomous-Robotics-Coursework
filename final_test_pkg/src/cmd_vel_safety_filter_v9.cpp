@@ -28,10 +28,11 @@ public:
 
     front_stop_ = this->declare_parameter<double>("front_stop", 0.09);
     front_slow_ = this->declare_parameter<double>("front_slow", 0.24);
-    side_stop_ = this->declare_parameter<double>("side_stop", 0.108);
+    side_stop_ = this->declare_parameter<double>("side_stop", 0.098);
+    side_slow_ = this->declare_parameter<double>("side_slow", 0.135);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
     wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 34.0);
-    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.045);
+    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.050);
 
     command_timeout_ = this->declare_parameter<double>("command_timeout", 0.35);
     scan_timeout_ = this->declare_parameter<double>("scan_timeout", 0.60);
@@ -78,6 +79,7 @@ private:
   double front_stop_;
   double front_slow_;
   double side_stop_;
+  double side_slow_;
   double front_half_width_deg_;
   double wide_half_width_deg_;
   double min_creep_linear_;
@@ -215,22 +217,26 @@ private:
 
     const double slow_min = std::min(front_narrow, front_wide);
 
-    if (cmd.linear.x > 0.0 && (front_narrow < front_stop_ || slow_min < side_stop_)) {
+    if (cmd.linear.x > 0.0 && (front_narrow < front_stop_ || front_wide < side_stop_)) {
       cmd.linear.x = 0.0;
     } else if (cmd.linear.x > 0.0 && slow_min < front_slow_) {
-      const double slow_window = std::max(0.01, front_slow_ - front_stop_);
+      const double active_slow_limit =
+        (front_wide < side_slow_) ? side_slow_ : front_slow_;
+      const double slow_window = std::max(0.01, active_slow_limit - front_stop_);
       const double scale = clamp(
         (slow_min - front_stop_) / slow_window,
-        0.35,
+        0.28,
         1.0);
       cmd.linear.x *= scale;
-      if (slow_min > side_stop_) {
-        cmd.linear.x = std::max(cmd.linear.x, std::min(min_creep_linear_, max_linear_));
+      if (front_narrow > front_stop_ && front_wide > side_stop_) {
+        cmd.linear.x = std::max(
+          cmd.linear.x,
+          std::min(min_creep_linear_, max_linear_));
       }
     }
 
-    if (slow_min < side_stop_) {
-      cmd.angular.z = clamp(cmd.angular.z, -0.35, 0.35);
+    if (front_wide < side_slow_) {
+      cmd.angular.z = clamp(cmd.angular.z, -0.55, 0.55);
     }
 
     cmd.angular.z = clamp(cmd.angular.z, -max_angular_, max_angular_);
