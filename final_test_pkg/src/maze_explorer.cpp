@@ -143,6 +143,11 @@ private:
     const double OPEN_SPACE_MIN_RATIO = 0.40;
     const double FORWARD_ALIGNMENT_WEIGHT = 1.20;
     const double OPEN_SPACE_WEIGHT = 1.80;
+    const double OPEN_RAY_MAX_DISTANCE = 1.10;
+    const double OPEN_RAY_LINE_CLEARANCE = 0.075;
+    const double OPEN_RAY_GOAL_CLEARANCE = 0.105;
+    const double LOOKAHEAD_PIVOT_CLEARANCE = 0.075;
+    const double LOOKAHEAD_GOAL_CLEARANCE = 0.105;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
     const double STUCK_TIMEOUT = 5.0;
@@ -842,7 +847,9 @@ private:
 
         geometry_msgs::msg::PoseStamped next_goal;
 
-        if (!makeKeepMovingGoal(latest_map_, next_goal)) {
+        if (!makeLookaheadTurnGoal(latest_map_, next_goal) &&
+            !makeOpenRayGoal(latest_map_, next_goal) &&
+            !makeKeepMovingGoal(latest_map_, next_goal)) {
             RCLCPP_WARN(this->get_logger(), "지역 진행 goal을 찾지 못했습니다. frontier를 짧게 재탐색합니다.");
 
             if (!findBestFrontier(latest_map_, next_goal)) {
@@ -929,6 +936,408 @@ private:
             goal_in_progress_ = false;
             canceling_goal_ = false;
         }
+    }
+
+    double rayClearDistanceFrom(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double start_x,
+        double start_y,
+        double yaw,
+        double max_distance,
+        double clearance)
+    {
+        const double step = std::max(0.03, static_cast<double>(map->info.resolution));
+        double last_safe_distance = 0.0;
+
+        for (double distance = step; distance <= max_distance; distance += step) {
+            const double wx = start_x + distance * std::cos(yaw);
+            const double wy = start_y + distance * std::sin(yaw);
+
+            int mx = 0;
+            int my = 0;
+
+            if (!worldToMap(map, wx, wy, mx, my)) {
+                break;
+            }
+
+            const int index = my * static_cast<int>(map->info.width) + mx;
+
+            if (map->data[index] != 0 ||
+                hasObstacleWithin(map, mx, my, clearance)) {
+                break;
+            }
+
+            last_safe_distance = distance;
+        }
+
+        return last_safe_distance;
+    }
+
+    double rayClearDistance(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double yaw,
+        double max_distance,
+        double clearance)
+    {
+        return rayClearDistanceFrom(
+            map,
+            robot_x_,
+            robot_y_,
+            yaw,
+            max_distance,
+            clearance
+        );
+    }
+
+    bool isLineSafeFrom(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double start_x,
+        double start_y,
+        double target_x,
+        double target_y,
+        double clearance)
+    {
+        const double distance = std::hypot(target_x - start_x, target_y - start_y);
+        const int steps = std::max(2, static_cast<int>(std::ceil(distance / map->info.resolution)));
+
+        for (int i = 1; i <= steps; ++i) {
+            const double ratio = static_cast<double>(i) / static_cast<double>(steps);
+            const double wx = start_x + (target_x - start_x) * ratio;
+            const double wy = start_y + (target_y - start_y) * ratio;
+
+            int mx = 0;
+            int my = 0;
+
+            if (!worldToMap(map, wx, wy, mx, my)) {
+                return false;
+            }
+
+            const int index = my * static_cast<int>(map->info.width) + mx;
+
+            if (map->data[index] != 0 ||
+                hasObstacleWithin(map, mx, my, clearance)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    bool makeLookaheadTurnGoal(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        geometry_msgs::msg::PoseStamped& goal)
+    {
+        const double pi = 3.14159265358979323846;
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
+
+        bool found = false;
+        double best_score = std::numeric_limits<double>::max();
+        double best_x = robot_x_;
+        double best_y = robot_y_;
+        double best_branch = 0.0;
+        double best_clearance = 0.0;
+        double best_turn = 0.0;
+
+        const std::vector<double> first_offsets = {
+            0.0,
+            pi / 18.0,
+            -pi / 18.0,
+            pi / 12.0,
+            -pi / 12.0
+        };
+
+        const std::vector<double> pivot_distances = {
+            0.35,
+            0.45,
+            0.55
+        };
+
+        const std::vector<double> turn_offsets = {
+            pi / 3.0,
+            -pi / 3.0,
+            pi / 4.0,
+            -pi / 4.0,
+            pi / 6.0,
+            -pi / 6.0,
+            pi / 2.0,
+            -pi / 2.0,
+            0.0
+        };
+
+        for (const double first_offset : first_offsets) {
+            const double first_yaw = robot_yaw_ + first_offset;
+
+            for (const double pivot_distance : pivot_distances) {
+                const double pivot_x = robot_x_ + pivot_distance * std::cos(first_yaw);
+                const double pivot_y = robot_y_ + pivot_distance * std::sin(first_yaw);
+
+                if (!isLineSafeFrom(
+                        map,
+                        robot_x_,
+                        robot_y_,
+                        pivot_x,
+                        pivot_y,
+                        LOOKAHEAD_PIVOT_CLEARANCE)) {
+                    continue;
+                }
+
+                for (const double turn_offset : turn_offsets) {
+                    const double second_yaw = first_yaw + turn_offset;
+                    const double branch_distance = rayClearDistanceFrom(
+                        map,
+                        pivot_x,
+                        pivot_y,
+                        second_yaw,
+                        0.95,
+                        OPEN_RAY_LINE_CLEARANCE
+                    );
+
+                    if (branch_distance < 0.42) {
+                        continue;
+                    }
+
+                    const double goal_distance = std::min(0.78, branch_distance - 0.05);
+                    const double wx = pivot_x + goal_distance * std::cos(second_yaw);
+                    const double wy = pivot_y + goal_distance * std::sin(second_yaw);
+
+                    if (!isLineSafeFrom(
+                            map,
+                            pivot_x,
+                            pivot_y,
+                            wx,
+                            wy,
+                            LOOKAHEAD_PIVOT_CLEARANCE)) {
+                        continue;
+                    }
+
+                    if (isInEntranceReturnZone(wx, wy)) {
+                        continue;
+                    }
+
+                    const double projection = forwardProjection(wx, wy);
+
+                    if (projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection ||
+                        projection < START_LINE_MARGIN) {
+                        continue;
+                    }
+
+                    int mx = 0;
+                    int my = 0;
+
+                    if (!worldToMap(map, wx, wy, mx, my)) {
+                        continue;
+                    }
+
+                    const int index = my * static_cast<int>(map->info.width) + mx;
+
+                    if (map->data[index] != 0) {
+                        continue;
+                    }
+
+                    const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
+
+                    if (clearance < LOOKAHEAD_GOAL_CLEARANCE) {
+                        continue;
+                    }
+
+                    const double open_ratio = openSpaceRatio(map, mx, my, OPEN_SPACE_RADIUS);
+                    const double turn_amount = std::abs(turn_offset);
+
+                    double score = 0.0;
+                    score -= 2.20 * branch_distance;
+                    score -= 1.30 * clearance;
+                    score -= 0.90 * open_ratio;
+                    score -= 0.75 * projection;
+                    score += 0.45 * std::abs(first_offset);
+                    score += 0.20 * turn_amount;
+
+                    // A useful bend should beat a straight ray into a pocket.
+                    if (turn_amount > pi / 5.0 && branch_distance > 0.55) {
+                        score -= 0.75;
+                    }
+
+                    if (!found || score < best_score) {
+                        found = true;
+                        best_score = score;
+                        best_x = wx;
+                        best_y = wy;
+                        best_branch = branch_distance;
+                        best_clearance = clearance;
+                        best_turn = turn_offset;
+                    }
+                }
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        goal.header.frame_id = "map";
+        goal.header.stamp = this->now();
+        goal.pose.position.x = best_x;
+        goal.pose.position.y = best_y;
+        goal.pose.orientation.x = 0.0;
+        goal.pose.orientation.y = 0.0;
+        goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
+        goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
+
+        current_goal_x_ = best_x;
+        current_goal_y_ = best_y;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "2단계 열린 방향 goal: x=%.2f, y=%.2f, score=%.2f, branch=%.2f, turn=%.2f, clearance=%.2f",
+            current_goal_x_,
+            current_goal_y_,
+            best_score,
+            best_branch,
+            best_turn,
+            best_clearance
+        );
+
+        return true;
+    }
+
+    bool makeOpenRayGoal(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        geometry_msgs::msg::PoseStamped& goal)
+    {
+        const double pi = 3.14159265358979323846;
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
+
+        bool found = false;
+        double best_score = std::numeric_limits<double>::max();
+        double best_x = robot_x_;
+        double best_y = robot_y_;
+        double best_ray = 0.0;
+        double best_clearance = 0.0;
+
+        const std::vector<double> angle_offsets = {
+            0.0,
+            pi / 18.0,
+            -pi / 18.0,
+            pi / 9.0,
+            -pi / 9.0,
+            pi / 6.0,
+            -pi / 6.0,
+            pi / 4.0,
+            -pi / 4.0,
+            pi / 3.0,
+            -pi / 3.0
+        };
+
+        const std::vector<double> preferred_distances = {
+            1.05,
+            0.90,
+            0.75,
+            0.60,
+            0.48
+        };
+
+        for (const double angle_offset : angle_offsets) {
+            const double yaw = robot_yaw_ + angle_offset;
+            const double ray_distance = rayClearDistance(
+                map,
+                yaw,
+                OPEN_RAY_MAX_DISTANCE,
+                OPEN_RAY_LINE_CLEARANCE
+            );
+
+            if (ray_distance < 0.42) {
+                continue;
+            }
+
+            for (const double desired_distance : preferred_distances) {
+                const double distance = std::min(desired_distance, ray_distance - 0.05);
+
+                if (distance < 0.42) {
+                    continue;
+                }
+
+                const double wx = robot_x_ + distance * std::cos(yaw);
+                const double wy = robot_y_ + distance * std::sin(yaw);
+
+                if (isInEntranceReturnZone(wx, wy)) {
+                    continue;
+                }
+
+                const double projection = forwardProjection(wx, wy);
+
+                if (projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection ||
+                    projection < START_LINE_MARGIN) {
+                    continue;
+                }
+
+                int mx = 0;
+                int my = 0;
+
+                if (!worldToMap(map, wx, wy, mx, my)) {
+                    continue;
+                }
+
+                const int index = my * static_cast<int>(map->info.width) + mx;
+
+                if (map->data[index] != 0) {
+                    continue;
+                }
+
+                const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
+
+                if (clearance < OPEN_RAY_GOAL_CLEARANCE) {
+                    continue;
+                }
+
+                const double open_ratio = openSpaceRatio(map, mx, my, OPEN_SPACE_RADIUS);
+                const double angle_cost = std::abs(angle_offset);
+                const double step_error = std::abs(distance - 0.85);
+
+                double score = 0.0;
+                score += 1.20 * angle_cost;
+                score += 0.50 * step_error;
+                score -= 2.40 * ray_distance;
+                score -= 1.20 * clearance;
+                score -= 0.80 * open_ratio;
+                score -= 0.70 * projection;
+
+                if (!found || score < best_score) {
+                    found = true;
+                    best_score = score;
+                    best_x = wx;
+                    best_y = wy;
+                    best_ray = ray_distance;
+                    best_clearance = clearance;
+                }
+            }
+        }
+
+        if (!found) {
+            return false;
+        }
+
+        goal.header.frame_id = "map";
+        goal.header.stamp = this->now();
+        goal.pose.position.x = best_x;
+        goal.pose.position.y = best_y;
+        goal.pose.orientation.x = 0.0;
+        goal.pose.orientation.y = 0.0;
+        goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
+        goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
+
+        current_goal_x_ = best_x;
+        current_goal_y_ = best_y;
+
+        RCLCPP_INFO(
+            this->get_logger(),
+            "열린 방향 우선 goal: x=%.2f, y=%.2f, score=%.2f, ray=%.2f, clearance=%.2f",
+            current_goal_x_,
+            current_goal_y_,
+            best_score,
+            best_ray,
+            best_clearance
+        );
+
+        return true;
     }
 
     bool makeKeepMovingGoal(

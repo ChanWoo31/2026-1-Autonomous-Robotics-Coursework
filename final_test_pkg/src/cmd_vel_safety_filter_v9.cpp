@@ -29,7 +29,7 @@ public:
     front_stop_ = this->declare_parameter<double>("front_stop", 0.09);
     front_slow_ = this->declare_parameter<double>("front_slow", 0.24);
     side_stop_ = this->declare_parameter<double>("side_stop", 0.098);
-    side_slow_ = this->declare_parameter<double>("side_slow", 0.135);
+    side_slow_ = this->declare_parameter<double>("side_slow", 0.145);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
     wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 34.0);
     min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.050);
