@@ -1,0 +1,39 @@
+CMakeLists.txt에 추가:
+
+add_executable(cmd_vel_safety_filter_v9 src/cmd_vel_safety_filter_v9.cpp)
+ament_target_dependencies(cmd_vel_safety_filter_v9 rclcpp geometry_msgs sensor_msgs)
+install(TARGETS cmd_vel_safety_filter_v9 DESTINATION lib/${PROJECT_NAME})
+
+package.xml에 없으면 추가:
+
+<depend>sensor_msgs</depend>
+<depend>geometry_msgs</depend>
+
+launch 파일에 safety node 추가:
+
+Node(
+    package='final_pkg',
+    executable='cmd_vel_safety_filter_v9',
+    name='cmd_vel_safety_filter',
+    output='screen',
+    parameters=[{
+        'nav_cmd_topic': '/cmd_vel',
+        'safe_cmd_topic': '/cmd_vel_safe',
+        'scan_topic': '/scan',
+        'max_linear': 0.15,
+        'max_angular': 0.75,
+        'front_stop': 0.18,
+        'front_slow': 0.40,
+        'side_stop': 0.12,
+        'side_slow': 0.25,
+        'side_bias_gain': 0.85,
+        'emergency_turn_speed': 0.36
+    }]
+)
+
+중요:
+로봇 구동 노드(turtlebot3_node 또는 diff_drive_controller)가 /cmd_vel이 아니라 /cmd_vel_safe를 받도록 remap해야 함.
+이 remap을 안 하면 safety filter가 켜져도 로봇은 여전히 Nav2의 원본 /cmd_vel을 받아서 또 부딪힘.
+
+예시 launch node remap:
+remappings=[('/cmd_vel', '/cmd_vel_safe')]

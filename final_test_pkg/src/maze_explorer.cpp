@@ -1,16 +1,19 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
+#include <tf2/time.h>
 #include <vector>
 #include <queue>
 #include <cmath>
 #include <limits>
 #include <algorithm>
 #include <chrono>
+#include <string>
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
 using GoalHandleNav2 = rclcpp_action::ClientGoalHandle<NavigateToPose>;
@@ -29,6 +32,7 @@ public:
         );
 
         goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
+        escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
         nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
 
         watchdog_timer_ = this->create_wall_timer(
@@ -37,19 +41,26 @@ public:
         );
 
         idle_retry_timer_ = this->create_wall_timer(
-            std::chrono::seconds(1),
+            std::chrono::milliseconds(500),
             std::bind(&MazeExplorer::idleRetryCallback, this)
         );
 
-        RCLCPP_INFO(this->get_logger(), "maze_explorer corridor v7 fallback loaded");
+        escape_timer_ = this->create_wall_timer(
+            std::chrono::milliseconds(50),
+            std::bind(&MazeExplorer::escapeTimerCallback, this)
+        );
+
+        RCLCPP_INFO(this->get_logger(), "maze_explorer corridor v9 fallback safety loaded");
     }
 
 private:
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
+    rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr escape_cmd_pub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
     rclcpp::TimerBase::SharedPtr idle_retry_timer_;
+    rclcpp::TimerBase::SharedPtr escape_timer_;
     nav_msgs::msg::OccupancyGrid::SharedPtr latest_map_;
 
     std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -58,6 +69,8 @@ private:
 
     bool goal_in_progress_ = false;
     bool canceling_goal_ = false;
+    bool escape_active_ = false;
+    rclcpp::Time escape_until_;
 
     double robot_x_ = 0.0;
     double robot_y_ = 0.0;
@@ -75,15 +88,19 @@ private:
     double current_start_path_distance_ = 0.0;
     bool is_start_position_saved_ = false;
 
-    struct Point2D
+    struct BlacklistEntry
     {
         double x;
         double y;
+        rclcpp::Time expires_at;
     };
 
-    std::vector<Point2D> blacklist_;
+    std::vector<BlacklistEntry> blacklist_;
 
-    const double BLACKLIST_RADIUS = 0.10;
+    const double BLACKLIST_RADIUS = 0.08;
+    const double BLACKLIST_TTL_SUCCESS = 3.0;
+    const double BLACKLIST_TTL_FAILURE = 5.0;
+    const double BLACKLIST_TTL_CANCEL = 4.0;
 
     const double GOAL_CLEARANCE = 0.110;
     const double PATH_CLEARANCE = 0.085;
@@ -105,24 +122,28 @@ private:
     const double EARLY_FRONT_GATE_DISTANCE = 1.20;
     const double MIN_EARLY_START_ALIGNMENT = 0.10;
     const double START_RETURN_ARM_DISTANCE = 1.80;
-    const double START_RETURN_GOAL_RADIUS = 0.75;
+    const double START_RETURN_GOAL_RADIUS = 0.85;
     const double START_RETURN_CANCEL_RADIUS = 0.45;
-    const double START_PATH_BACKTRACK_ALLOWANCE = 0.15;
+    const double START_PATH_BACKTRACK_ALLOWANCE = 0.35;
     const double START_PATH_CANCEL_BACKTRACK = 0.60;
     const double START_PATH_CANCEL_ARM_DISTANCE = 0.90;
     const double START_PATH_PROGRESS_WEIGHT = 1.8;
     const double MIN_START_PATH_GOAL_DISTANCE = 0.60;
-    const double KEEP_MOVING_MIN_DISTANCE = 0.12;
-    const double KEEP_MOVING_MAX_DISTANCE = 0.85;
+    const double KEEP_MOVING_MIN_DISTANCE = 0.45;
+    const double KEEP_MOVING_MAX_DISTANCE = 1.20;
+    const double KEEP_MOVING_MIN_EUCLIDEAN_DISTANCE = 0.32;
+    const double KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE = 0.22;
     const double KEEP_MOVING_MIN_CLEARANCE = 0.115;
     const double KEEP_MOVING_RELAXED_CLEARANCE = 0.105;
     const double KEEP_MOVING_MIN_BOTTLENECK = 0.115;
     const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.105;
     const double KEEP_MOVING_BLACKLIST_RADIUS = 0.08;
-    const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.20;
+    const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.25;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
-    const double STUCK_TIMEOUT = 8.0;
+    const double STUCK_TIMEOUT = 5.0;
+    const double ESCAPE_BACKUP_SPEED = 0.055;
+    const double ESCAPE_BACKUP_DURATION = 1.0;
 
     const double ESCAPE_MIN_DISTANCE = 0.22;
     const double ESCAPE_MAX_DISTANCE = 0.55;
@@ -133,6 +154,11 @@ private:
 
     double current_goal_x_ = 0.0;
     double current_goal_y_ = 0.0;
+    double goal_start_x_ = 0.0;
+    double goal_start_y_ = 0.0;
+    double goal_start_projection_ = 0.0;
+    double goal_start_path_distance_ = 0.0;
+    int consecutive_goal_failures_ = 0;
 
     void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
     {
@@ -256,6 +282,35 @@ private:
     double distanceFromStart(double wx, double wy) const
     {
         return std::hypot(wx - start_x_, wy - start_y_);
+    }
+
+    void pruneExpiredBlacklist()
+    {
+        const rclcpp::Time now = this->now();
+
+        blacklist_.erase(
+            std::remove_if(
+                blacklist_.begin(),
+                blacklist_.end(),
+                [&](const BlacklistEntry& entry) {
+                    return entry.expires_at <= now;
+                }),
+            blacklist_.end());
+    }
+
+    void addBlacklistPoint(double wx, double wy, double ttl_seconds)
+    {
+        pruneExpiredBlacklist();
+
+        blacklist_.push_back({
+            wx,
+            wy,
+            this->now() + rclcpp::Duration::from_seconds(ttl_seconds)
+        });
+
+        if (blacklist_.size() > 16) {
+            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 4);
+        }
     }
 
     bool hasLeftEntrance() const
@@ -718,7 +773,7 @@ private:
 
     bool trySendNextGoal()
     {
-        if (!latest_map_ || goal_in_progress_ || canceling_goal_) {
+        if (!latest_map_ || goal_in_progress_ || canceling_goal_ || escape_active_) {
             return false;
         }
 
@@ -728,27 +783,28 @@ private:
 
         updateForwardProgress();
         updateStartPathProgress(latest_map_);
+        pruneExpiredBlacklist();
 
         geometry_msgs::msg::PoseStamped next_goal;
 
-        if (!findBestFrontier(latest_map_, next_goal)) {
-            RCLCPP_WARN(this->get_logger(), "선택 가능한 frontier를 찾지 못했습니다. 지속 이동 goal을 찾습니다.");
+        if (!makeKeepMovingGoal(latest_map_, next_goal)) {
+            RCLCPP_WARN(this->get_logger(), "지역 진행 goal을 찾지 못했습니다. frontier를 짧게 재탐색합니다.");
 
-            if (!makeKeepMovingGoal(latest_map_, next_goal)) {
+            if (!findBestFrontier(latest_map_, next_goal)) {
                 RCLCPP_WARN(
                     this->get_logger(),
-                    "지속 이동 goal도 찾지 못했습니다. blacklist를 초기화하고 한 번 더 탐색합니다."
+                    "frontier goal도 찾지 못했습니다. blacklist를 초기화하고 local fallback을 시도합니다."
                 );
 
                 blacklist_.clear();
 
-                if (!findBestFrontier(latest_map_, next_goal) &&
-                    !makeKeepMovingGoal(latest_map_, next_goal) &&
+                if (!makeKeepMovingGoal(latest_map_, next_goal) &&
                     !makeEscapeGoal(latest_map_, next_goal)) {
                     RCLCPP_WARN(
                         this->get_logger(),
-                        "현재 costmap 기준 goal이 없습니다. 1초 후 다시 탐색합니다."
+                        "현재 costmap 기준 goal이 없습니다. 벽에서 살짝 후진한 뒤 다시 탐색합니다."
                     );
+                    startEscapeRecovery("no reachable Nav2 goal");
                     return false;
                 }
             }
@@ -758,9 +814,49 @@ private:
         return true;
     }
 
+    void startEscapeRecovery(const std::string& reason)
+    {
+        if (escape_active_ || goal_in_progress_ || canceling_goal_) {
+            return;
+        }
+
+        geometry_msgs::msg::Twist stop;
+        escape_cmd_pub_->publish(stop);
+
+        escape_active_ = true;
+        escape_until_ = this->now() + rclcpp::Duration::from_seconds(ESCAPE_BACKUP_DURATION);
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Nav2 goal 생성 실패/벽 접촉 복구: %.2fs 동안 %.3fm/s 후진합니다. reason=%s",
+            ESCAPE_BACKUP_DURATION,
+            ESCAPE_BACKUP_SPEED,
+            reason.c_str()
+        );
+    }
+
+    void escapeTimerCallback()
+    {
+        if (!escape_active_) {
+            return;
+        }
+
+        geometry_msgs::msg::Twist cmd;
+
+        if (this->now() < escape_until_) {
+            cmd.linear.x = -ESCAPE_BACKUP_SPEED;
+            escape_cmd_pub_->publish(cmd);
+            return;
+        }
+
+        escape_cmd_pub_->publish(cmd);
+        escape_active_ = false;
+        trySendNextGoal();
+    }
+
     void cancelCurrentGoalAndBlacklist()
     {
-        blacklist_.push_back({current_goal_x_, current_goal_y_});
+        addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_CANCEL);
         canceling_goal_ = true;
 
         if (active_goal_handle_) {
@@ -801,6 +897,13 @@ private:
         const int height = static_cast<int>(map->info.height);
         const double resolution = map->info.resolution;
         const double current_projection = forwardProjection(robot_x_, robot_y_);
+        const bool short_fallback = consecutive_goal_failures_ >= 2;
+        const double target_step = short_fallback ? 0.45 : 0.85;
+        const double min_step = short_fallback ? 0.20 : KEEP_MOVING_MIN_DISTANCE;
+        const double max_step = short_fallback ? 0.75 : KEEP_MOVING_MAX_DISTANCE;
+        const double min_euclidean_step = short_fallback ?
+            KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE :
+            KEEP_MOVING_MIN_EUCLIDEAN_DISTANCE;
 
         auto selectGoal = [&](bool relaxed, bool ignore_blacklist, int& best_mx, int& best_my,
                               double& best_score, double& best_path_distance,
@@ -826,13 +929,18 @@ private:
 
                     const double path_distance = reachable_distances[index] * resolution;
 
-                    if (path_distance < KEEP_MOVING_MIN_DISTANCE ||
-                        path_distance > KEEP_MOVING_MAX_DISTANCE) {
+                    if (path_distance < min_step || path_distance > max_step) {
                         continue;
                     }
 
                     const double wx = mapToWorldX(map, mx);
                     const double wy = mapToWorldY(map, my);
+                    const double euclidean_distance =
+                        std::hypot(wx - robot_x_, wy - robot_y_);
+
+                    if (euclidean_distance < min_euclidean_step) {
+                        continue;
+                    }
 
                     if (isInEntranceReturnZone(wx, wy)) {
                         continue;
@@ -844,15 +952,19 @@ private:
                         continue;
                     }
 
-                    if (!relaxed &&
-                        projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection) {
+                    const double backtrack_allowance =
+                        relaxed ? 0.35 : KEEP_MOVING_BACKTRACK_ALLOWANCE;
+
+                    if (projection + backtrack_allowance < current_projection) {
                         continue;
                     }
 
                     const double start_path_distance = start_distances[index] * resolution;
 
-                    if (!relaxed &&
-                        start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
+                    const double path_backtrack_allowance =
+                        relaxed ? 0.35 : START_PATH_BACKTRACK_ALLOWANCE;
+
+                    if (start_path_distance + path_backtrack_allowance <
                         max_start_path_distance_) {
                         continue;
                     }
@@ -891,14 +1003,13 @@ private:
                         std::cos(yaw - robot_yaw_)
                     ));
 
-                    const double desired_step = relaxed ? 0.45 : 0.65;
-                    const double step_error = std::abs(path_distance - desired_step);
+                    const double step_error = std::abs(path_distance - target_step);
 
                     double score = 0.0;
                     score += 0.55 * step_error;
                     score += 0.20 * angle_diff;
-                    score -= 1.60 * start_path_distance;
-                    score -= 1.10 * projection;
+                    score -= 2.10 * start_path_distance;
+                    score -= 1.50 * projection;
                     score -= 0.70 * clearance;
                     score -= 0.70 * bottleneck;
                     score += WALL_CLEARANCE_PENALTY_WEIGHT *
@@ -911,7 +1022,7 @@ private:
                     score += 12.0 * std::max(0.0, KEEP_MOVING_MIN_BOTTLENECK - bottleneck);
 
                     if (projection < current_projection) {
-                        score += 1.00;
+                        score += 2.00;
                     }
 
                     if (!found || score < best_score) {
@@ -984,16 +1095,14 @@ private:
 
         const double goal_x = mapToWorldX(map, best_mx);
         const double goal_y = mapToWorldY(map, best_my);
-        const double yaw = std::atan2(goal_y - robot_y_, goal_x - robot_x_);
-
         goal.header.frame_id = "map";
         goal.header.stamp = this->now();
         goal.pose.position.x = goal_x;
         goal.pose.position.y = goal_y;
         goal.pose.orientation.x = 0.0;
         goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = std::sin(yaw * 0.5);
-        goal.pose.orientation.w = std::cos(yaw * 0.5);
+        goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
+        goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
 
         current_goal_x_ = goal_x;
         current_goal_y_ = goal_y;
@@ -1063,7 +1172,6 @@ private:
         double best_score = -std::numeric_limits<double>::max();
         double best_x = robot_x_;
         double best_y = robot_y_;
-        double best_yaw = robot_yaw_;
         double best_clearance = 0.0;
 
         const std::vector<double> distances = {
@@ -1156,7 +1264,6 @@ private:
                     best_score = score;
                     best_x = wx;
                     best_y = wy;
-                    best_yaw = yaw;
                     best_clearance = clearance;
                 }
             }
@@ -1207,7 +1314,6 @@ private:
 
         int best_mx = 0;
         int best_my = 0;
-        double best_yaw = 0.0;
         double best_path_bottleneck_clearance = 0.0;
 
         const int dx[4] = {0, 0, -1, 1};
@@ -1454,7 +1560,6 @@ private:
                         min_distance = score;
                         best_mx = goal_mx;
                         best_my = goal_my;
-                        best_yaw = target_yaw;
                         best_path_bottleneck_clearance = path_bottleneck_clearance;
                         frontier_found = true;
                     }
@@ -1497,7 +1602,8 @@ private:
 
     void sendGoal(const geometry_msgs::msg::PoseStamped& goal_pose)
     {
-        if (!nav_client_->wait_for_action_server(std::chrono::seconds(3))) {
+        if (!nav_client_->wait_for_action_server(std::chrono::seconds(1))) {
+            RCLCPP_WARN(this->get_logger(), "Nav2 action server 대기 중입니다. 다음 idle tick에서 재시도합니다.");
             return;
         }
 
@@ -1518,6 +1624,7 @@ private:
                     );
 
                     blacklist_.clear();
+                    consecutive_goal_failures_++;
                     goal_in_progress_ = false;
                     active_goal_handle_.reset();
                     trySendNextGoal();
@@ -1532,6 +1639,10 @@ private:
 
         goal_in_progress_ = true;
         canceling_goal_ = false;
+        goal_start_x_ = robot_x_;
+        goal_start_y_ = robot_y_;
+        goal_start_projection_ = forwardProjection(robot_x_, robot_y_);
+        goal_start_path_distance_ = current_start_path_distance_;
 
         best_goal_distance_ =
             std::hypot(current_goal_x_ - robot_x_, current_goal_y_ - robot_y_);
@@ -1543,7 +1654,7 @@ private:
 
     void idleRetryCallback()
     {
-        if (goal_in_progress_ || canceling_goal_ || !latest_map_) {
+        if (goal_in_progress_ || canceling_goal_ || escape_active_ || !latest_map_) {
             return;
         }
 
@@ -1606,16 +1717,52 @@ private:
 
     void resultCallback(const GoalHandleNav2::WrappedResult& result)
     {
+        updateRobotPose();
+        updateForwardProgress();
+        if (latest_map_) {
+            updateStartPathProgress(latest_map_);
+        }
+
+        const double moved_distance =
+            std::hypot(robot_x_ - goal_start_x_, robot_y_ - goal_start_y_);
+        const double projection_gain =
+            forwardProjection(robot_x_, robot_y_) - goal_start_projection_;
+        const double path_gain =
+            current_start_path_distance_ - goal_start_path_distance_;
+
+        bool should_escape_after_result = false;
+
         if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
-            RCLCPP_INFO(
-                this->get_logger(),
-                "목표 도착: x=%.2f, y=%.2f",
-                current_goal_x_,
-                current_goal_y_
-            );
-            blacklist_.push_back({current_goal_x_, current_goal_y_});
+            if (moved_distance < 0.08 &&
+                projection_gain < 0.06 &&
+                path_gain < 0.06) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "목표 성공 처리됐지만 실제 이동이 거의 없습니다. 더 먼 goal로 재생성: moved=%.2f, projection_gain=%.2f, path_gain=%.2f",
+                    moved_distance,
+                    projection_gain,
+                    path_gain
+                );
+
+                consecutive_goal_failures_++;
+                addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
+                should_escape_after_result = consecutive_goal_failures_ >= 2;
+            } else {
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "목표 도착: x=%.2f, y=%.2f, moved=%.2f, projection_gain=%.2f",
+                    current_goal_x_,
+                    current_goal_y_,
+                    moved_distance,
+                    projection_gain
+                );
+                consecutive_goal_failures_ = 0;
+                addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_SUCCESS);
+            }
         } else if (canceling_goal_) {
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
+            consecutive_goal_failures_++;
+            should_escape_after_result = consecutive_goal_failures_ >= 2;
         } else {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -1624,16 +1771,20 @@ private:
                 current_goal_y_
             );
 
-            // 같은 실패 goal 반복을 막기 위해 현재 goal만 작은 반경으로 임시 제외한다.
-            blacklist_.push_back({current_goal_x_, current_goal_y_});
-            if (blacklist_.size() > 12) {
-                blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 4);
-            }
+            consecutive_goal_failures_++;
+            // 같은 실패 goal 반복만 짧게 막고, local fallback은 필요하면 blacklist를 무시한다.
+            addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
+            should_escape_after_result = consecutive_goal_failures_ >= 2;
         }
 
         active_goal_handle_.reset();
         canceling_goal_ = false;
         goal_in_progress_ = false;
+
+        if (should_escape_after_result) {
+            startEscapeRecovery("repeated Nav2 goal failure");
+            return;
+        }
 
         trySendNextGoal();
     }
