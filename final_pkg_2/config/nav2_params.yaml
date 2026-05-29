@@ -1,14 +1,11 @@
-# FIXED: 좁은 통로 충돌 방지/goal failed 완화용 Nav2 파라미터
 bt_navigator:
   ros__parameters:
     global_frame: map
     robot_base_frame: base_link
     transform_tolerance: 1.5
     filter_duration: 0.3
-    # maze_explorer는 자체적으로 실패 goal을 버리고 다음 goal을 고르므로,
-    # NavigateToPose BT에서는 후진 recovery가 없는 단순 재계획 트리를 사용한다.
-    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_w_replanning_time.xml"
-    default_nav_through_poses_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    # 막힌 길 탈출을 위해 회복 행동이 포함된 기본 트리 사용
+    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     always_reload_bt_xml: false
     goal_blackboard_id: goal
     path_blackboard_id: path
@@ -18,7 +15,7 @@ bt_navigator:
 
 controller_server:
   ros__parameters:
-    controller_frequency: 20.0
+    controller_frequency: 15.0
     enable_stamped_cmd_vel: false
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -30,42 +27,41 @@ controller_server:
     
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.04  # 미세한 움직임도 인정하여 조기 포기 방지
-      movement_time_allowance: 25.0
+      required_movement_radius: 0.05  # 미세한 움직임도 인정하여 조기 포기 방지
+      movement_time_allowance: 15.0
       
     goal_checker:
       stateful: true
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.10
+      xy_goal_tolerance: 0.09
       yaw_goal_tolerance: 3.14  # 프론티어 탐색 시 방향은 중요하지 않음
       
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
-      max_vel_x: 0.12           # 좁은 통로에서 멈추지 않도록 속도 일부 회복
+      max_vel_x: 0.18           # 통로 통과성을 회복하되 코너 속도는 약간 제한
       max_vel_x_backwards: 0.0  # 입구 방향 되감기 방지를 위해 후진 금지
-      max_vel_theta: 1.0
-      acc_lim_x: 0.7
-      acc_lim_theta: 0.9
+      max_vel_theta: 2.5
+      acc_lim_x: 1.4
+      acc_lim_theta: 2.0
       min_turning_radius: 0.0   # 제자리 회전 완벽 지원
       allow_init_with_backwards_motion: False
-      max_global_plan_lookahead_dist: 0.35
-      global_plan_prune_distance: 0.06
-      feasibility_check_lookahead_distance: 0.12
-      global_plan_viapoint_sep: 0.05
+      max_global_plan_lookahead_dist: 0.45
+      global_plan_prune_distance: 0.20
+      feasibility_check_lookahead_distance: 0.20
       
       footprint_model:
         type: "circular"
-        radius: 0.115            # Burger 실제 외곽+여유. 통로가 너무 좁으면 이 값을 줄이지 말고 통로를 넓혀야 함
+        radius: 0.085            # 통로가 닫히지 않도록 보수값 완화
         
-      xy_goal_tolerance: 0.10
+      xy_goal_tolerance: 0.09
       yaw_goal_tolerance: 3.14
       free_goal_vel: false
       
       # 장애물 회피 설정
-      min_obstacle_dist: 0.045    # footprint를 키우고 추가 여유는 통로 통과 가능하게 유지
+      min_obstacle_dist: 0.018   # 좁은 통로 통과와 벽 스침 방지의 절충값
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 0.5
-      obstacle_poses_affected: 25 # 최적화 연산량 감소 및 빠른 반응 속도 확보
+      obstacle_poses_affected: 15 # 최적화 연산량 감소 및 빠른 반응 속도 확보
       
       no_inner_iterations: 5
       no_outer_iterations: 4
@@ -81,9 +77,8 @@ controller_server:
       weight_kinematics_nh: 1000.0
       weight_kinematics_forward_drive: 40.0   # 후진은 남기되 전진 주행을 더 선호
       weight_kinematics_turning_radius: 1.0
-      weight_optimaltime: 6.0 
-      weight_obstacle: 80.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
-      weight_viapoint: 15.0                    # global path를 코너에서 과하게 자르지 않게 함
+      weight_optimaltime: 10.0 
+      weight_obstacle: 16.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
 
 local_costmap:
   local_costmap:
@@ -96,13 +91,13 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.02
-      robot_radius: 0.115          # Nav2 costmap과 TEB footprint를 반드시 동일하게 맞춤
+      robot_radius: 0.085          # TEB footprint와 일관되게 통로 통과성 회복
       plugins: ["obstacle_layer", "inflation_layer"] # 연산량 확보를 위해 voxel 제외
       
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.16      # 통로가 닫히지 않도록 완화
-        cost_scaling_factor: 4.0
+        inflation_radius: 0.07      # 통로가 costmap에서 닫히지 않도록 완화
+        cost_scaling_factor: 22.0
         
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -126,7 +121,7 @@ global_costmap:
       global_frame: map
       robot_base_frame: base_link
       transform_tolerance: 1.5
-      robot_radius: 0.115
+      robot_radius: 0.085
       resolution: 0.02
       track_unknown_space: true
       plugins: ["static_layer", "inflation_layer"]
@@ -150,8 +145,8 @@ global_costmap:
         
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        inflation_radius: 0.16
-        cost_scaling_factor: 4.0
+        inflation_radius: 0.09
+        cost_scaling_factor: 14.0
       always_send_full_costmap: true
 
 planner_server:
@@ -160,9 +155,9 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.12
+      tolerance: 0.08
       use_astar: true
-      allow_unknown: true
+      allow_unknown: false
 
 behavior_server:
   ros__parameters:
@@ -183,9 +178,9 @@ behavior_server:
     robot_base_frame: base_link
     transform_timeout: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 0.7
-    min_rotational_vel: 0.15
-    rotational_acc_lim: 0.9
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
     enable_stamped_cmd_vel: false
 
 velocity_smoother:
@@ -193,12 +188,12 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.12, 0.0, 1.0]
-    min_velocity: [0.0, 0.0, -1.0]
+    max_velocity: [0.18, 0.0, 2.5]
+    min_velocity: [0.0, 0.0, -2.5]
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
-    max_accel: [0.7, 0.0, 0.9]
-    max_decel: [-0.7, 0.0, -0.9]
+    max_accel: [1.4, 0.0, 2.5]
+    max_decel: [-1.4, 0.0, -2.5]
     odom_topic: "odom"
     odom_duration: 0.1
     enable_stamped_cmd_vel: false

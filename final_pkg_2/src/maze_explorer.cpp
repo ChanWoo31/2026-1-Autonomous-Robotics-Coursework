@@ -75,22 +75,20 @@ private:
 
     std::vector<Point2D> blacklist_;
 
-    const double BLACKLIST_RADIUS = 0.10;
+    const double BLACKLIST_RADIUS = 0.15;
 
-    const double GOAL_CLEARANCE = 0.120;
-    const double PATH_CLEARANCE = 0.095;
-    const double PATH_BOTTLENECK_CLEARANCE = 0.115;
-    const double GOAL_STANDOFF = 0.28;
-    const double GOAL_SEARCH_RADIUS = 0.32;
-    const double PREFERRED_GOAL_CLEARANCE = 0.22;
-    const double PATH_BOTTLENECK_WEIGHT = 2.2;
+    const double GOAL_CLEARANCE = 0.07;
+    const double PATH_CLEARANCE = 0.04;
+    const double PATH_BOTTLENECK_CLEARANCE = 0.085;
+    const double GOAL_STANDOFF = 0.20;
+    const double GOAL_SEARCH_RADIUS = 0.22;
+    const double PREFERRED_GOAL_CLEARANCE = 0.12;
+    const double PATH_BOTTLENECK_WEIGHT = 1.4;
     const double FRONTIER_CLUSTER_LENGTH_WEIGHT = 0.2;
-    const double WALL_CLEARANCE_COMFORT = 0.18;
-    const double WALL_CLEARANCE_PENALTY_WEIGHT = 9.0;
 
-    const double MIN_GOAL_DISTANCE = 0.35;
-    const double MIN_FINAL_GOAL_DISTANCE = 0.35;
-    const double MIN_FINAL_GOAL_CLEARANCE = 0.120;
+    const double MIN_GOAL_DISTANCE = 0.45;
+    const double MIN_FINAL_GOAL_DISTANCE = 0.40;
+    const double MIN_FINAL_GOAL_CLEARANCE = 0.11;
 
     const double START_LINE_MARGIN = 0.20;
     const double START_DIRECTION_WEIGHT = 1.1;
@@ -98,25 +96,17 @@ private:
     const double MIN_EARLY_START_ALIGNMENT = 0.10;
     const double START_RETURN_ARM_DISTANCE = 1.80;
     const double START_RETURN_GOAL_RADIUS = 0.75;
-    const double START_RETURN_CANCEL_RADIUS = 0.45;
+    const double START_RETURN_CANCEL_RADIUS = 0.65;
     const double START_PATH_BACKTRACK_ALLOWANCE = 0.15;
-    const double START_PATH_CANCEL_BACKTRACK = 0.60;
+    const double START_PATH_CANCEL_BACKTRACK = 0.30;
     const double START_PATH_CANCEL_ARM_DISTANCE = 0.90;
     const double START_PATH_PROGRESS_WEIGHT = 1.8;
     const double MIN_START_PATH_GOAL_DISTANCE = 0.60;
-    const double KEEP_MOVING_MIN_DISTANCE = 0.12;
-    const double KEEP_MOVING_MAX_DISTANCE = 1.20;
-    const double KEEP_MOVING_MIN_CLEARANCE = 0.115;
-    const double KEEP_MOVING_RELAXED_CLEARANCE = 0.095;
-    const double KEEP_MOVING_MIN_BOTTLENECK = 0.105;
-    const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.085;
-    const double KEEP_MOVING_BLACKLIST_RADIUS = 0.08;
-    const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.20;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
-    const double STUCK_TIMEOUT = 18.0;
+    const double STUCK_TIMEOUT = 8.0;
 
-    const int MIN_FRONTIER_CLUSTER_SIZE = 6;
+    const int MIN_FRONTIER_CLUSTER_SIZE = 10;
 
     double current_goal_x_ = 0.0;
     double current_goal_y_ = 0.0;
@@ -279,16 +269,6 @@ private:
                my < static_cast<int>(map->info.height);
     }
 
-    double mapToWorldX(const nav_msgs::msg::OccupancyGrid::SharedPtr& map, int mx) const
-    {
-        return map->info.origin.position.x + (mx + 0.5) * map->info.resolution;
-    }
-
-    double mapToWorldY(const nav_msgs::msg::OccupancyGrid::SharedPtr& map, int my) const
-    {
-        return map->info.origin.position.y + (my + 0.5) * map->info.resolution;
-    }
-
     bool hasObstacleWithin(
         const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
         int mx,
@@ -380,7 +360,6 @@ private:
     bool findCenteredReachableGoalCell(
         const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
         const std::vector<int>& reachable_distances,
-        const std::vector<double>& reachable_bottleneck_clearances,
         int seed_mx,
         int seed_my,
         int& goal_mx,
@@ -432,17 +411,7 @@ private:
                     continue;
                 }
 
-                const double bottleneck = reachable_bottleneck_clearances[index];
-                const double low_clearance_penalty =
-                    std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
-                const double low_bottleneck_penalty =
-                    std::max(0.0, WALL_CLEARANCE_COMFORT - bottleneck);
-                const double score =
-                    clearance +
-                    (0.70 * bottleneck) -
-                    (0.25 * offset_distance) -
-                    (WALL_CLEARANCE_PENALTY_WEIGHT * low_clearance_penalty) -
-                    (WALL_CLEARANCE_PENALTY_WEIGHT * low_bottleneck_penalty);
+                const double score = clearance - (0.25 * offset_distance);
 
                 if (!found || score > best_score) {
                     found = true;
@@ -719,25 +688,8 @@ private:
         geometry_msgs::msg::PoseStamped next_goal;
 
         if (!findBestFrontier(latest_map_, next_goal)) {
-            RCLCPP_WARN(this->get_logger(), "선택 가능한 frontier를 찾지 못했습니다. 지속 이동 goal을 찾습니다.");
-
-            if (!makeKeepMovingGoal(latest_map_, next_goal)) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "지속 이동 goal도 찾지 못했습니다. blacklist를 초기화하고 한 번 더 탐색합니다."
-                );
-
-                blacklist_.clear();
-
-                if (!findBestFrontier(latest_map_, next_goal) &&
-                    !makeKeepMovingGoal(latest_map_, next_goal)) {
-                    RCLCPP_WARN(
-                        this->get_logger(),
-                        "현재 costmap 기준 안전한 goal이 없습니다. 1초 후 다시 탐색합니다."
-                    );
-                    return false;
-                }
-            }
+            RCLCPP_WARN(this->get_logger(), "선택 가능한 frontier를 찾지 못했습니다.");
+            return false;
         }
 
         sendGoal(next_goal);
@@ -755,244 +707,6 @@ private:
             goal_in_progress_ = false;
             canceling_goal_ = false;
         }
-    }
-
-    bool makeKeepMovingGoal(
-        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        geometry_msgs::msg::PoseStamped& goal)
-    {
-        std::vector<int> reachable_distances;
-        std::vector<double> reachable_bottleneck_clearances;
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
-
-        if (!computeReachableMetrics(
-                map,
-                reachable_distances,
-                reachable_bottleneck_clearances)) {
-            return false;
-        }
-
-        if (!computeReachableMetricsFrom(
-                map,
-                start_x_,
-                start_y_,
-                false,
-                start_distances,
-                start_bottleneck_clearances)) {
-            return false;
-        }
-
-        const int width = static_cast<int>(map->info.width);
-        const int height = static_cast<int>(map->info.height);
-        const double resolution = map->info.resolution;
-        const double current_projection = forwardProjection(robot_x_, robot_y_);
-
-        auto selectGoal = [&](bool relaxed, bool ignore_blacklist, int& best_mx, int& best_my,
-                              double& best_score, double& best_path_distance,
-                              double& best_start_path_distance, double& best_projection,
-                              double& best_bottleneck) -> bool {
-            bool found = false;
-            best_score = std::numeric_limits<double>::max();
-
-            const double min_clearance =
-                relaxed ? KEEP_MOVING_RELAXED_CLEARANCE : KEEP_MOVING_MIN_CLEARANCE;
-            const double min_bottleneck =
-                relaxed ? KEEP_MOVING_RELAXED_BOTTLENECK : KEEP_MOVING_MIN_BOTTLENECK;
-
-            for (int my = 1; my < height - 1; ++my) {
-                for (int mx = 1; mx < width - 1; ++mx) {
-                    const int index = my * width + mx;
-
-                    if (map->data[index] != 0 ||
-                        reachable_distances[index] < 0 ||
-                        start_distances[index] < 0) {
-                        continue;
-                    }
-
-                    const double path_distance = reachable_distances[index] * resolution;
-
-                    if (path_distance < KEEP_MOVING_MIN_DISTANCE ||
-                        path_distance > KEEP_MOVING_MAX_DISTANCE) {
-                        continue;
-                    }
-
-                    const double wx = mapToWorldX(map, mx);
-                    const double wy = mapToWorldY(map, my);
-
-                    if (isInEntranceReturnZone(wx, wy)) {
-                        continue;
-                    }
-
-                    const double projection = forwardProjection(wx, wy);
-
-                    if (projection < START_LINE_MARGIN) {
-                        continue;
-                    }
-
-                    if (!relaxed &&
-                        projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection) {
-                        continue;
-                    }
-
-                    const double start_path_distance = start_distances[index] * resolution;
-
-                    if (!relaxed &&
-                        start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
-                        max_start_path_distance_) {
-                        continue;
-                    }
-
-                    const double bottleneck = reachable_bottleneck_clearances[index];
-
-                    if (bottleneck < min_bottleneck) {
-                        continue;
-                    }
-
-                    const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
-
-                    if (clearance < min_clearance) {
-                        continue;
-                    }
-
-                    if (!ignore_blacklist) {
-                        bool is_blacklisted = false;
-
-                        for (const auto& bp : blacklist_) {
-                            if (std::hypot(wx - bp.x, wy - bp.y) <
-                                KEEP_MOVING_BLACKLIST_RADIUS) {
-                                is_blacklisted = true;
-                                break;
-                            }
-                        }
-
-                        if (is_blacklisted) {
-                            continue;
-                        }
-                    }
-
-                    const double yaw = std::atan2(wy - robot_y_, wx - robot_x_);
-                    const double angle_diff = std::abs(std::atan2(
-                        std::sin(yaw - robot_yaw_),
-                        std::cos(yaw - robot_yaw_)
-                    ));
-
-                    const double desired_step = relaxed ? 0.55 : 0.85;
-                    const double step_error = std::abs(path_distance - desired_step);
-
-                    double score = 0.0;
-                    score += 0.55 * step_error;
-                    score += 0.20 * angle_diff;
-                    score -= 1.60 * start_path_distance;
-                    score -= 1.10 * projection;
-                    score -= 0.70 * clearance;
-                    score -= 0.70 * bottleneck;
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - bottleneck);
-
-                    if (projection < current_projection) {
-                        score += 1.00;
-                    }
-
-                    if (!found || score < best_score) {
-                        found = true;
-                        best_score = score;
-                        best_mx = mx;
-                        best_my = my;
-                        best_path_distance = path_distance;
-                        best_start_path_distance = start_path_distance;
-                        best_projection = projection;
-                        best_bottleneck = bottleneck;
-                    }
-                }
-            }
-
-            return found;
-        };
-
-        int best_mx = 0;
-        int best_my = 0;
-        double best_score = 0.0;
-        double best_path_distance = 0.0;
-        double best_start_path_distance = 0.0;
-        double best_projection = 0.0;
-        double best_bottleneck = 0.0;
-
-        bool found = selectGoal(
-            false,
-            false,
-            best_mx,
-            best_my,
-            best_score,
-            best_path_distance,
-            best_start_path_distance,
-            best_projection,
-            best_bottleneck
-        );
-
-        if (!found) {
-            found = selectGoal(
-                true,
-                false,
-                best_mx,
-                best_my,
-                best_score,
-                best_path_distance,
-                best_start_path_distance,
-                best_projection,
-                best_bottleneck
-            );
-        }
-
-        if (!found) {
-            found = selectGoal(
-                true,
-                true,
-                best_mx,
-                best_my,
-                best_score,
-                best_path_distance,
-                best_start_path_distance,
-                best_projection,
-                best_bottleneck
-            );
-        }
-
-        if (!found) {
-            return false;
-        }
-
-        const double goal_x = mapToWorldX(map, best_mx);
-        const double goal_y = mapToWorldY(map, best_my);
-        const double yaw = std::atan2(goal_y - robot_y_, goal_x - robot_x_);
-
-        goal.header.frame_id = "map";
-        goal.header.stamp = this->now();
-        goal.pose.position.x = goal_x;
-        goal.pose.position.y = goal_y;
-        goal.pose.orientation.x = 0.0;
-        goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = std::sin(yaw * 0.5);
-        goal.pose.orientation.w = std::cos(yaw * 0.5);
-
-        current_goal_x_ = goal_x;
-        current_goal_y_ = goal_y;
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "비상 지속 이동 목표: x=%.2f, y=%.2f, score=%.2f, path=%.2f, start_path=%.2f, projection=%.2f, bottleneck=%.2f",
-            current_goal_x_,
-            current_goal_y_,
-            best_score,
-            best_path_distance,
-            best_start_path_distance,
-            best_projection,
-            best_bottleneck
-        );
-
-        return true;
     }
 
     bool findBestFrontier(
@@ -1138,7 +852,6 @@ private:
                     if (!findCenteredReachableGoalCell(
                             map,
                             reachable_distances,
-                            reachable_bottleneck_clearances,
                             candidate_mx,
                             candidate_my,
                             goal_mx,
@@ -1244,10 +957,6 @@ private:
                              static_cast<double>(cluster.size()) * resolution;
                     score -= START_DIRECTION_WEIGHT * projection;
                     score -= START_PATH_PROGRESS_WEIGHT * start_path_distance;
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
 
                     if (angle_diff > 1.57) {
                         score += 0.3;
@@ -1401,7 +1110,6 @@ private:
                 current_goal_x_,
                 current_goal_y_
             );
-            blacklist_.push_back({current_goal_x_, current_goal_y_});
         } else if (canceling_goal_) {
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
         } else {

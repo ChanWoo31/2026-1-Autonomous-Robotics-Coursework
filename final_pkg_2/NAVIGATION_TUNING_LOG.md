@@ -432,244 +432,6 @@ Nav2가 통로 중간 waypoint에 도착해 `Goal succeeded`를 낸 뒤, 전진-
 - `Goal succeeded`가 탈출 완료가 아니면 멈추지 않고 다음 작은 목표를 계속 생성한다.
 - frontier가 아직 안 생겼거나 너무 엄격한 조건 때문에 후보가 없을 때도 로봇이 정지 상태로 끝나지 않게 한다.
 
-## 2026-05-29 실제 실행 파일 기준 지속 이동 fallback 재적용
-
-실제 `/home/han/ros2_ws/install/final_pkg/lib/final_pkg/maze_explorer`가 실행 중인 것을 확인했다.
-현재 소스에는 이전에 넣은 `makeKeepMovingGoal()`이 없어서, `Goal succeeded` 뒤 `findBestFrontier()`가 실패하면 그대로 정지하는 상태였다.
-
-- `maze_explorer.cpp`
-  - `trySendNextGoal()`에서 frontier 실패 시 바로 종료하지 않고 `makeKeepMovingGoal()` 호출
-  - `makeKeepMovingGoal()`은 reachable free cell 중 다음 작은 이동 goal을 생성
-  - goal 후보 거리: `0.25m ~ 1.60m`
-  - 1차: 정상 clearance/bottleneck/blacklist 적용
-  - 2차: clearance/bottleneck 완화
-  - 3차: blacklist까지 무시하되 시작점 뒤/입구 복귀 구역은 계속 제외
-
-의도:
-- 중간 waypoint에서 `Goal succeeded`가 떠도 탐색 노드가 끝난 것처럼 멈추지 않게 한다.
-- frontier가 없어도 지도상 갈 수 있는 free cell을 따라 계속 움직이게 한다.
-- 출구에서도 별도 종료 판정 없이 계속 바깥쪽 free cell을 향해 진행한다.
-
-## 2026-05-29 모서리 경유 및 벽 스침 완화
-
-좁은 통로는 통과했지만, 코너/모서리 쪽 waypoint를 경유하면서 벽을 살짝 스치는 상황이 발생했다.
-
-- `maze_explorer.cpp`
-  - `GOAL_CLEARANCE: 0.07 -> 0.08`
-  - `PATH_BOTTLENECK_CLEARANCE: 0.085 -> 0.095`
-  - `PREFERRED_GOAL_CLEARANCE: 0.12 -> 0.14`
-  - `PATH_BOTTLENECK_WEIGHT: 1.4 -> 1.9`
-  - `MIN_FINAL_GOAL_CLEARANCE: 0.11 -> 0.12`
-  - `WALL_CLEARANCE_COMFORT = 0.13` 추가
-  - frontier/keep-moving goal scoring에 낮은 clearance/bottleneck penalty 추가
-  - keep-moving 정상 clearance/bottleneck도 소폭 상향
-- `nav2_params.yaml`
-  - TEB `min_obstacle_dist: 0.018 -> 0.022`
-  - TEB `weight_obstacle: 16.0 -> 18.0`
-
-의도:
-- 모서리 바로 옆 waypoint를 덜 고른다.
-- 통로를 완전히 막을 정도로 inflation/radius를 키우지 않고, 후보 선택과 TEB 궤적만 중앙 쪽으로 살짝 민다.
-
-## 2026-05-29 실제 장애물 접촉 후 안전 우선 재조정
-
-모서리 스침 수준이 아니라 실제 장애물 접촉이 발생했다.
-따라서 "계속 이동"보다 충돌 방지를 우선하도록 explorer 후보와 TEB local planner를 더 보수적으로 조정했다.
-
-- `maze_explorer.cpp`
-  - `GOAL_CLEARANCE: 0.08 -> 0.09`
-  - `PATH_CLEARANCE: 0.04 -> 0.05`
-  - `PATH_BOTTLENECK_CLEARANCE: 0.095 -> 0.11`
-  - `PREFERRED_GOAL_CLEARANCE: 0.14 -> 0.16`
-  - `PATH_BOTTLENECK_WEIGHT: 1.9 -> 2.4`
-  - `WALL_CLEARANCE_COMFORT: 0.13 -> 0.16`
-  - `WALL_CLEARANCE_PENALTY_WEIGHT: 3.0 -> 5.0`
-  - `MIN_FINAL_GOAL_DISTANCE: 0.40 -> 0.50`
-  - `MIN_FINAL_GOAL_CLEARANCE: 0.12 -> 0.13`
-  - keep-moving relaxed clearance/bottleneck도 하한 상향
-- `nav2_params.yaml`
-  - TEB `max_vel_x: 0.18 -> 0.15`
-  - TEB `acc_lim_x: 1.4 -> 1.0`
-  - TEB footprint radius `0.085 -> 0.09`
-  - local/global `robot_radius: 0.085 -> 0.09`
-  - TEB `min_obstacle_dist: 0.022 -> 0.03`
-  - TEB `weight_obstacle: 18.0 -> 25.0`
-  - velocity smoother max/accel/decel도 동일하게 낮춤
-
-의도:
-- 좁은 통로 통과성은 남기되, 벽 바로 옆 waypoint와 빠른 코너 진입을 줄인다.
-- 장애물 접촉이 난 현재 상태에서는 멈춤보다 충돌 방지를 우선한다.
-
-## 2026-05-29 장애물 2회 접촉 후 local costmap/TEB 추가 보수화
-
-최신 바이너리와 launch parameter가 적용된 상태에서도 장애물 접촉이 2회 발생했다.
-확인 결과 local costmap inflation이 `0.07`로 얇아, TEB가 코너에서 벽 가까운 궤적을 만들 여지가 있었다.
-
-- `maze_explorer.cpp`
-  - `GOAL_CLEARANCE: 0.09 -> 0.10`
-  - `PATH_CLEARANCE: 0.05 -> 0.06`
-  - `PATH_BOTTLENECK_CLEARANCE: 0.11 -> 0.12`
-  - `PREFERRED_GOAL_CLEARANCE: 0.16 -> 0.17`
-  - `PATH_BOTTLENECK_WEIGHT: 2.4 -> 3.0`
-  - `WALL_CLEARANCE_PENALTY_WEIGHT: 5.0 -> 7.0`
-  - `MIN_FINAL_GOAL_CLEARANCE: 0.13 -> 0.14`
-  - keep-moving relaxed clearance/bottleneck도 다시 상향
-- `nav2_params.yaml`
-  - TEB `max_vel_x: 0.15 -> 0.12`
-  - TEB `acc_lim_x: 1.0 -> 0.8`
-  - TEB footprint radius `0.09 -> 0.095`
-  - local/global `robot_radius: 0.09 -> 0.095`
-  - TEB `min_obstacle_dist: 0.03 -> 0.04`
-  - TEB `weight_obstacle: 25.0 -> 35.0`
-  - local inflation `0.07 -> 0.10`, `cost_scaling_factor: 22.0 -> 18.0`
-  - global inflation `0.09 -> 0.10`
-  - velocity smoother max/accel/decel도 `0.12`, `0.8` 기준으로 낮춤
-
-의도:
-- 실제 접촉이 반복되므로 통과성보다 충돌 방지를 우선한다.
-- 특히 local planner가 벽 가까운 trajectory를 만들지 못하게 local inflation과 TEB obstacle penalty를 함께 올린다.
-
-## 2026-05-29 바퀴 걸림 대응
-
-좁은 길을 통과하려는 방향은 좋았지만, 몸통 중심은 지나가고 바퀴 가장자리가 벽/장애물에 살짝 걸리는 증상이 발생했다.
-
-- `nav2_params.yaml`
-  - TEB footprint radius `0.095 -> 0.105`
-  - local/global `robot_radius: 0.095 -> 0.105`
-  - TEB `min_obstacle_dist: 0.04 -> 0.03`
-  - TEB `weight_obstacle: 35.0 -> 45.0`
-- `maze_explorer.cpp`
-  - `PATH_CLEARANCE: 0.06 -> 0.065`
-  - `PATH_BOTTLENECK_CLEARANCE: 0.12 -> 0.13`
-  - `PREFERRED_GOAL_CLEARANCE: 0.17 -> 0.18`
-  - `PATH_BOTTLENECK_WEIGHT: 3.0 -> 3.5`
-  - `WALL_CLEARANCE_COMFORT: 0.16 -> 0.18`
-  - `WALL_CLEARANCE_PENALTY_WEIGHT: 7.0 -> 8.0`
-  - `MIN_FINAL_GOAL_CLEARANCE: 0.14 -> 0.15`
-  - keep-moving clearance/bottleneck 하한 소폭 상향
-
-의도:
-- planner가 바퀴 폭을 포함한 실제 로봇 외곽을 보게 한다.
-- `min_obstacle_dist`를 과하게 키우지 않아 좁은 길 통과성은 유지한다.
-- goal 후보와 local trajectory는 벽 중앙 쪽으로 더 강하게 유도한다.
-
-## 2026-05-29 통로 통과성 회복 절충
-
-충돌 방지를 위해 너무 보수적으로 올린 값 때문에 좁은 통로가 costmap/planner 상에서 거의 닫혀 보이고 통과하지 못했다.
-속도는 빠르면 코너 충돌 위험이 있지만, 너무 느리면 TEB가 좁은 통로에서 정지/회전으로 빠지는 단점도 있어 중간값으로 되돌렸다.
-
-- `nav2_params.yaml`
-  - TEB `max_vel_x: 0.12 -> 0.16`
-  - TEB `acc_lim_x: 0.8 -> 1.1`
-  - TEB/local/global radius `0.105 -> 0.10`
-  - TEB `weight_obstacle: 45.0 -> 30.0`
-  - local inflation `0.10 -> 0.08`, `cost_scaling_factor: 18.0 -> 22.0`
-  - global inflation `0.10 -> 0.09`, `cost_scaling_factor: 14.0 -> 16.0`
-  - velocity smoother도 `0.16` 기준으로 조정
-- `maze_explorer.cpp`
-  - `GOAL_CLEARANCE: 0.10 -> 0.085`
-  - `PATH_CLEARANCE: 0.065 -> 0.05`
-  - `PATH_BOTTLENECK_CLEARANCE: 0.13 -> 0.105`
-  - `PREFERRED_GOAL_CLEARANCE: 0.18 -> 0.15`
-  - `PATH_BOTTLENECK_WEIGHT: 3.5 -> 2.2`
-  - `WALL_CLEARANCE_COMFORT: 0.18 -> 0.15`
-  - keep-moving clearance/bottleneck도 통과성 쪽으로 완화
-
-의도:
-- 저번 빠른 버전의 통과성을 일부 회복한다.
-- 바퀴 걸림 방지는 radius `0.10`으로 남기고, 과한 inflation/clearance로 통로가 닫히는 문제를 줄인다.
-
-## 2026-05-29 centerline 기반 새 explorer 추가
-
-파라미터 튜닝만으로는 "좁은 통로 중앙을 따라가면서 빠르게 탈출" 요구를 안정적으로 만족시키기 어렵다고 판단했다.
-기존 `maze_explorer.cpp`는 유지하고, 새 알고리즘을 별도 실행 파일로 추가했다.
-
-- 새 파일
-  - `src/maze_explorer_centerline.cpp`
-- 새 실행 파일
-  - `ros2 run final_pkg maze_explorer_centerline`
-- `CMakeLists.txt`
-  - `maze_explorer_centerline` target 추가
-
-알고리즘:
-- `/map` occupancy grid에서 obstacle distance transform을 계산한다.
-- 낮은 clearance cell은 경로 비용을 크게 올리고, 높은 clearance cell을 선호하는 Dijkstra를 수행한다.
-- frontier를 바로 goal로 찍지 않고, center-biased path 위의 짧은 lookahead waypoint를 Nav2 goal로 보낸다.
-- 좁은 통로에서는 양쪽 벽에서 최대한 비슷하게 떨어진 medial/centerline 쪽 cell이 선택된다.
-- frontier가 없으면 known free cell 중 시작점에서 더 깊은 cell을 선택해 계속 전진한다.
-- 실패 goal은 blacklist에 넣고, succeeded는 탐색 종료로 보지 않고 다음 waypoint를 바로 생성한다.
-
-의도:
-- 좁은 통로를 못 지나가는 문제를 inflation만 키워서 해결하지 않는다.
-- 장애물 사이 중앙을 따라가는 알고리즘적 기준을 goal 생성 단계에 넣는다.
-- 기존 노드를 망가뜨리지 않고 새 노드로 비교 테스트할 수 있게 한다.
-
-## 2026-05-29 centerline 반복 abort 수정
-
-터미널 확인 결과 `maze_explorer_centerline`은 실행 중이고 Nav2 lifecycle도 active였지만,
-같은 goal `(-0.90, 0.37)`을 반복 전송한 뒤 Nav2가 계속 abort/recovery로 빠지고 있었다.
-
-- `maze_explorer_centerline.cpp`
-  - 실패/거부/cancel된 waypoint뿐 아니라 그 waypoint를 만든 최종 target frontier도 blacklist에 추가
-  - center snap 단계에서 blacklist된 lookahead cell을 제외
-  - blacklist된 goal pose는 전송하지 않음
-  - waypoint에 성공했을 때도 같은 중간 waypoint를 바로 다시 선택하지 않도록 해당 waypoint를 blacklist
-
-의도:
-- 실패한 target 주변으로 다시 goal을 찍는 반복 고리를 끊는다.
-- Nav2가 출발하기 전에 같은 불가능 goal을 계속 abort하는 상태를 막는다.
-- 성공한 중간 waypoint를 탈출 완료로 보지 않고 다음 centerline waypoint로 계속 진행한다.
-
-## 2026-05-29 centerline 폐기, 기존 maze_explorer 개선
-
-`maze_explorer_centerline`은 실제 주행에서 길 선택이 불안정하여 테스트용으로만 두고,
-기존 `maze_explorer`를 다시 기준 노드로 사용한다.
-
-현재 문제 정리:
-- 기존 explorer는 centerline보다 전체 방향 선택은 좋다.
-- 다만 좁은 통로/코너에서 TEB가 global path를 짧게 자르며 벽이나 장애물에 스칠 수 있다.
-- 성공한 중간 goal을 blacklist하지 않아 다음 goal 선택이 같은 구역에 머물 수 있다.
-- explorer에서 후진을 금지해도 Nav2 recovery의 `BackUp` behavior가 뒤로 빠질 수 있다.
-
-수정:
-- `maze_explorer.cpp`
-  - 성공한 goal도 blacklist에 추가해 같은 waypoint 주변을 반복 선택하지 않게 함
-  - `findCenteredReachableGoalCell()`에서 후보 cell 자체 clearance뿐 아니라 그 cell까지 가는 경로의 bottleneck clearance도 같이 점수화
-  - 벽 옆에 점 하나가 좋아 보이는 후보보다, 실제 경로 전체가 조금 더 넓은 후보를 선택
-- `nav2_params.yaml`
-  - goal checker/TEB `xy_goal_tolerance: 0.09 -> 0.07`
-  - TEB `max_global_plan_lookahead_dist: 0.45 -> 0.55`
-  - TEB `global_plan_prune_distance: 0.20 -> 0.10`
-  - TEB `global_plan_viapoint_sep: 0.08`, `weight_viapoint: 8.0` 추가
-  - TEB `weight_obstacle: 30.0 -> 34.0`
-  - `NavigateToPose` BT를 후진 recovery가 없는 `navigate_w_replanning_time.xml`로 변경
-  - behavior server의 `backup` action server는 BT navigator 활성화에 필요하므로 유지
-
-의도:
-- 기존 explorer의 좋은 방향 선택은 유지한다.
-- 좁은 통로 통과를 막을 정도로 radius/inflation을 키우지 않는다.
-- 코너에서 local planner가 global path를 과하게 shortcut해서 벽을 긁는 현상을 줄인다.
-- 중간 goal 성공 후에도 같은 곳에 머물지 않고 다음 후보로 계속 진행한다.
-
-## 2026-05-29 bt_navigator inactive 수정
-
-현장에서 `maze_explorer` 프로세스는 실행 중이고 `/map`도 정상 구독 중이었지만,
-`/bt_navigator`만 `inactive [2]` 상태라서 `/goal_pose`, `/cmd_vel_nav`가 새로 나오지 않았다.
-
-로그 원인:
-- `bt_navigator`: `"backup" action server not available`
-- 기본 `navigate_through_poses_w_replanning_and_recovery.xml`이 `BackUp` 노드를 로딩하는데,
-  behavior server에서 `backup` plugin을 제거해 action server가 없어졌다.
-
-수정:
-- `behavior_plugins`에 `backup`을 다시 추가
-- 단, `maze_explorer`가 쓰는 `NavigateToPose`는 후진 recovery 없는
-  `navigate_w_replanning_time.xml`을 사용하도록 변경
-
-의도:
-- BT navigator lifecycle이 정상 active가 되게 한다.
-- 기존 탐색 주행에서는 후진 recovery를 직접 쓰지 않고, 실패하면 explorer가 다음 goal을 선택하게 한다.
-
 현재 기준으로 기록된 핵심 내용:
 
 - `nav2_params.yaml` 튜닝 내용.
@@ -938,3 +700,73 @@ RViz 스크린샷에서 로봇 footprint가 코너 inflation 영역에 붙고, g
 
 주의:
 - 이 값은 통과 우선이라 실제 로봇이 벽에 닿으면 `robot_radius`와 TEB `footprint_model.radius`를 `0.085~0.09`로 되돌린다.
+
+## 2026-05-28 final_pkg_2 방식 교체
+
+`final_pkg_2`는 `final_pkg`의 Nav2 frontier 방식이 잘 안 되는 문제를 피하기 위한 새 실험 패키지다.
+따라서 기존 `maze_explorer` 복사본을 계속 튜닝하는 대신, 새 노드 `maze_grid_navigator`를 추가했다.
+
+삭제:
+- `maze_escape.cpp`
+- `maze_escape_launch.py`
+
+삭제 이유:
+- `maze_escape`는 빠르게 통과시키기 위해 만든 라이다 기반 벽 추종 노드였다.
+- 교수님 조건상 우수법/좌수법 금지에 걸릴 가능성이 크므로 제출/실험 기본 경로에서 제거했다.
+
+새 방식:
+- 노드: `maze_grid_navigator`
+- 실행:
+
+```bash
+ros2 launch final_pkg_2 maze_grid_navigator_launch.py
+```
+
+알고리즘:
+- SLAM `/map` occupancy grid를 구독한다.
+- `map -> base_link` TF로 현재 위치를 얻는다.
+- 점유 셀 주변에 로봇 반경만큼 clearance를 계산한다.
+- free cell 중 실제 로봇이 지나갈 수 있는 cell만 traversable grid로 만든다.
+- 현재 위치에서 BFS/Dijkstra로 도달 가능한 영역을 계산한다.
+- unknown 영역과 맞닿은 frontier cell을 찾는다.
+- 후보 goal은 아래 기준으로 점수화한다.
+  - 시작점 기준 경로거리가 더 깊은가
+  - 현재 위치에서 실제로 도달 가능한가
+  - 벽과의 clearance가 충분한가
+  - frontier cluster가 너무 작은 노이즈가 아닌가
+  - 입구로 되돌아가는 후보가 아닌가
+- 선택된 goal까지 A* 경로를 직접 만든다.
+- Nav2 action을 쓰지 않고 `/cmd_vel`을 직접 발행한다.
+- 경로 추종은 pure pursuit 방식이다.
+- 라이다 `/scan`은 전방/측면 충돌 직전 안전 보정에만 사용한다.
+- 충분히 진행한 뒤 전방과 양옆이 넓게 열리면 출구로 판단하고 `EXIT_RUN`으로 빠져나간다.
+
+이 방식이 기존 문제에 대응하는 방식:
+- Nav2/TEB가 좁은 통로를 inflation 때문에 막힌 길로 판단하는 문제를 피한다.
+- goal succeeded가 중간 waypoint에서 뜨고 멈추는 문제를 줄인다.
+- frontier goal을 Nav2에 넘기지 않고 직접 A* path를 생성하므로 goal reject/failed 반복을 줄인다.
+- 시작점 주변은 일정 거리 이상 진행 후 planning grid에서 차단하여 입구 복귀를 막는다.
+- 정체 watchdog이 target을 blacklist하고 즉시 재계획하여 미로 중간 정지를 줄인다.
+
+주의:
+- 이 방식도 SLAM `/map` 품질에 의존한다.
+- 실제 로봇이 벽에 닿으면 launch parameter에서 `planning_clearance`, `goal_clearance`, `side_guard_distance`를 조금 올린다.
+- 좁은 통로를 못 지나가면 `planning_clearance`를 `0.075~0.080`으로 낮춘다.
+
+## 2026-05-29 입구 이탈 방지 보강
+
+질문:
+- "입구에서 안 빠져나가게 한 것 맞나?"
+
+확인 결과:
+- 기존 `maze_grid_navigator`에는 시작점 주변을 막는 로직이 있었다.
+- 하지만 frontier가 없을 때 쓰는 `deep-free` fallback은 초반 뒤쪽 후보를 점수로만 낮추고 완전히 금지하지 않았다.
+
+보강:
+- 시작 yaw 기준으로 시작점 뒤쪽 projection `< -0.06m`인 cell은 planning grid에서 완전히 제외한다.
+- frontier target과 deep-free target 모두 입구 금지 영역 후보를 버린다.
+- 로봇이 충분히 미로 안으로 들어간 뒤 시작점 반경 `entrance_block_radius` 안으로 되돌아오거나 시작선 뒤로 가면 `EntranceGuard` 동작으로 시작 yaw 방향을 다시 바라보고 전진한다.
+
+의도:
+- 목표 선택 단계, A* 경로 생성 단계, 실제 주행 단계에서 모두 입구 이탈을 막는다.
+- 단, 시작 직후 로봇 주변 몇 cm는 localization/지도 초기화를 위해 예외로 둔다.

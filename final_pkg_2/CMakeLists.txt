@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(final_pkg)
+project(final_pkg_2)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -26,12 +26,12 @@ add_executable(motor_control_test src/motor_control_test.cpp)
 ament_target_dependencies(motor_control_test rclcpp std_msgs geometry_msgs sensor_msgs tf2 tf2_geometry_msgs)
 add_executable(maze_explorer src/maze_explorer.cpp)
 ament_target_dependencies(maze_explorer rclcpp nav_msgs geometry_msgs nav2_msgs rclcpp_action tf2 tf2_ros)
-add_executable(maze_explorer_centerline src/maze_explorer_centerline.cpp)
-ament_target_dependencies(maze_explorer_centerline rclcpp nav_msgs geometry_msgs nav2_msgs rclcpp_action tf2 tf2_ros)
 add_executable(maze_runner src/maze_runner.cpp)
 ament_target_dependencies(maze_runner rclcpp geometry_msgs sensor_msgs nav_msgs tf2)
 add_executable(maze_explorer_v2 src/maze_explorer_v2.cpp)
 ament_target_dependencies(maze_explorer_v2 rclcpp nav_msgs geometry_msgs nav2_msgs rclcpp_action)
+add_executable(maze_grid_navigator src/maze_grid_navigator.cpp)
+ament_target_dependencies(maze_grid_navigator rclcpp geometry_msgs sensor_msgs nav_msgs tf2 tf2_ros)
 
 
 install(TARGETS
@@ -39,9 +39,9 @@ install(TARGETS
   motor_control
   motor_control_test
   maze_explorer
-  maze_explorer_centerline
   maze_runner
   maze_explorer_v2
+  maze_grid_navigator
   DESTINATION lib/${PROJECT_NAME}
 )
 
