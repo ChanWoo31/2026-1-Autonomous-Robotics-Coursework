@@ -13,26 +13,26 @@ class CmdVelSafetyFilter : public rclcpp::Node
 public:
   CmdVelSafetyFilter() : Node("cmd_vel_safety_filter")
   {
-    nav_cmd_topic_ = this->declare_parameter<std::string>("nav_cmd_topic", "/cmd_vel");
-    safe_cmd_topic_ = this->declare_parameter<std::string>("safe_cmd_topic", "/cmd_vel_safe");
+    nav_cmd_topic_ = this->declare_parameter<std::string>("nav_cmd_topic", "/cmd_vel_nav");
+    safe_cmd_topic_ = this->declare_parameter<std::string>("safe_cmd_topic", "/cmd_vel");
     scan_topic_ = this->declare_parameter<std::string>("scan_topic", "/scan");
 
-    max_linear_ = this->declare_parameter<double>("max_linear", 0.18);
+    max_linear_ = this->declare_parameter<double>("max_linear", 0.12);
     max_reverse_ = this->declare_parameter<double>("max_reverse", 0.06);
-    max_angular_ = this->declare_parameter<double>("max_angular", 1.00);
+    max_angular_ = this->declare_parameter<double>("max_angular", 1.20);
 
     // 사용자는 base_link -> laser yaw를 3.14159로 주고 있음.
     // 따라서 LaserScan raw frame 기준 로봇 정면은 보통 0도가 아니라 pi 근처다.
     // 만약 필터가 계속 이상하게 막으면 실행 시 front_angle_offset:=0.0으로 바꿔서 비교한다.
     front_angle_offset_ = this->declare_parameter<double>("front_angle_offset", 3.14159);
 
-    front_stop_ = this->declare_parameter<double>("front_stop", 0.09);
-    front_slow_ = this->declare_parameter<double>("front_slow", 0.24);
-    side_stop_ = this->declare_parameter<double>("side_stop", 0.098);
-    side_slow_ = this->declare_parameter<double>("side_slow", 0.145);
+    front_stop_ = this->declare_parameter<double>("front_stop", 0.070);
+    front_slow_ = this->declare_parameter<double>("front_slow", 0.180);
+    side_stop_ = this->declare_parameter<double>("side_stop", 0.075);
+    side_slow_ = this->declare_parameter<double>("side_slow", 0.110);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
-    wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 34.0);
-    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.050);
+    wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 24.0);
+    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.035);
 
     command_timeout_ = this->declare_parameter<double>("command_timeout", 0.35);
     scan_timeout_ = this->declare_parameter<double>("scan_timeout", 0.60);
@@ -235,8 +235,8 @@ private:
       }
     }
 
-    if (front_wide < side_slow_) {
-      cmd.angular.z = clamp(cmd.angular.z, -0.55, 0.55);
+    if (front_wide < side_stop_) {
+      cmd.angular.z = clamp(cmd.angular.z, -0.80, 0.80);
     }
 
     cmd.angular.z = clamp(cmd.angular.z, -max_angular_, max_angular_);

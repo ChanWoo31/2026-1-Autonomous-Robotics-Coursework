@@ -1,0 +1,223 @@
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 1.5
+    filter_duration: 0.3
+    # 막힌 길 탈출을 위해 회복 행동이 포함된 기본 트리 사용
+    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    always_reload_bt_xml: false
+    goal_blackboard_id: goal
+    path_blackboard_id: path
+    navigators: ['navigate_to_pose']
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 10.0
+    enable_stamped_cmd_vel: false
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+    
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.05  # 미세한 움직임도 인정하여 조기 포기 방지
+      movement_time_allowance: 15.0
+      
+    goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 3.14  # 프론티어 탐색 시 방향은 중요하지 않음
+      
+    FollowPath:
+      plugin: "teb_local_planner::TebLocalPlannerROS"
+      max_vel_x: 0.22           # TB3 버거의 최대 속도
+      max_vel_x_backwards: 0.05 # 막힌 길 탈출을 위한 최소한의 후진 허용
+      max_vel_theta: 2.5
+      acc_lim_x: 1.0
+      acc_lim_theta: 1.5
+      min_turning_radius: 0.0   # 제자리 회전 완벽 지원
+      
+      footprint_model:
+        type: "circular"
+        radius: 0.11            # 실제 TB3 버거 물리 반경 적용 (매우 중요)
+        
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 3.14
+      free_goal_vel: false
+      
+      # 장애물 회피 설정
+      min_obstacle_dist: 0.06   # circular footprint 바깥쪽에 둘 최소 여유 거리
+      include_costmap_obstacles: True
+      costmap_obstacles_behind_robot_dist: 0.5
+      obstacle_poses_affected: 15 # 최적화 연산량 감소 및 빠른 반응 속도 확보
+      
+      no_inner_iterations: 5
+      no_outer_iterations: 4
+      optimization_activate: True
+      optimization_verbose: False
+      penalty_epsilon: 0.05
+      
+      # 미로 돌파용 파라미터 튜닝
+      weight_max_vel_x: 2.0
+      weight_max_vel_theta: 1.0
+      weight_acc_lim_x: 1.0
+      weight_acc_lim_theta: 1.0
+      weight_kinematics_nh: 1000.0
+      weight_kinematics_forward_drive: 30.0   # 후진 남발은 막되 장애물 회피보다 우선하지 않게 조정
+      weight_kinematics_turning_radius: 1.0
+      weight_optimaltime: 10.0 
+      weight_obstacle: 40.0                   # 벽 근처에서 회피 경로를 더 강하게 선택
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 8.0
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.02
+      robot_radius: 0.105         # TB3 Burger 실제 반경과 TEB footprint를 일관되게 사용
+      plugins: ["obstacle_layer", "inflation_layer"] # 연산량 확보를 위해 voxel 제외
+      
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.12      # 좁은 통로가 코스트맵 상에서 닫히지 않도록 제한
+        cost_scaling_factor: 8.0
+        
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 1.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          obstacle_max_range: 2.5
+          raytrace_max_range: 3.0
+          inf_is_valid: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 1.5
+      robot_radius: 0.105
+      resolution: 0.02
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 1.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 3.5
+          obstacle_max_range: 3.0
+          
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.12
+        cost_scaling_factor: 8.0
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 5.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.3
+      use_astar: true
+      allow_unknown: true
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_timeout: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.4
+    rotational_acc_lim: 3.2
+    enable_stamped_cmd_vel: false
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.22, 0.0, 2.5]
+    min_velocity: [-0.05, 0.0, -2.5]
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+    max_accel: [1.0, 0.0, 2.5]
+    max_decel: [-1.0, 0.0, -2.5]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    enable_stamped_cmd_vel: false
+
+# Collision Monitor는 좁은 통로에서 거짓 양성(False Positive)으로 로봇을 정지시키므로 비활성화 또는 대폭 완화
+collision_monitor:
+  ros__parameters:
+    enabled: false
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 1.5
+    source_timeout: 5.0
+    enable_stamped_cmd_vel: false
+    polygons: ["PolygonStop"]
+    PolygonStop:
+      type: "circle"
+      radius: 0.12 # 로봇 쉘 바로 바깥까지만 체크
+      action_type: "stop"
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
+      enabled: false
+    observation_sources: ["scan"]
+    scan:
+      source_timeout: 0.2
+      type: "scan"
+      topic: "/scan"
+      enabled: true

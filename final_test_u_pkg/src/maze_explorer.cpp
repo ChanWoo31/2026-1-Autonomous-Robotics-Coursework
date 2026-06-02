@@ -32,7 +32,9 @@ public:
         );
 
         goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
-        escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+        // Nav2의 cmd_vel을 safety filter로 보내기 위한 입력 토픽.
+        // 실제 로봇으로 나가는 /cmd_vel은 safety filter가 publish해야 한다.
+        escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
         nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
 
         watchdog_timer_ = this->create_wall_timer(
@@ -50,7 +52,7 @@ public:
             std::bind(&MazeExplorer::escapeTimerCallback, this)
         );
 
-        RCLCPP_INFO(this->get_logger(), "maze_explorer corridor v9 fallback safety loaded");
+        RCLCPP_INFO(this->get_logger(), "maze_explorer v12 no-return progress loaded");
     }
 
 private:
@@ -121,9 +123,14 @@ private:
     const double START_DIRECTION_WEIGHT = 1.1;
     const double EARLY_FRONT_GATE_DISTANCE = 1.20;
     const double MIN_EARLY_START_ALIGNMENT = 0.10;
-    const double START_RETURN_ARM_DISTANCE = 1.80;
-    const double START_RETURN_GOAL_RADIUS = 0.85;
-    const double START_RETURN_CANCEL_RADIUS = 0.45;
+    const double START_RETURN_ARM_DISTANCE = 0.85;
+    const double START_RETURN_GOAL_RADIUS = 0.75;
+    const double START_RETURN_CANCEL_RADIUS = 0.50;
+    const double ENTRANCE_NO_RETURN_PATH_DISTANCE = 0.75;
+    const double ENTRANCE_NO_RETURN_WORLD_RADIUS = 0.70;
+    const double NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE = 0.20;
+    const double NO_RETURN_GOAL_BACKTRACK_ALLOWANCE = 0.20;
+    const double RELAXED_BACKTRACK_ALLOWANCE = 0.60;
     const double START_PATH_BACKTRACK_ALLOWANCE = 0.35;
     const double START_PATH_CANCEL_BACKTRACK = 0.60;
     const double START_PATH_CANCEL_ARM_DISTANCE = 0.90;
@@ -187,7 +194,9 @@ private:
             if (isBacktrackingTowardEntrance()) {
                 RCLCPP_WARN(
                     this->get_logger(),
-                    "시작점 방향 되감기 감지. 현재 목표 취소: 현재경로거리=%.2f, 최대경로거리=%.2f",
+                    "시작점 방향 되감기 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
+                    distanceFromStart(robot_x_, robot_y_),
+                    max_start_distance_,
                     current_start_path_distance_,
                     max_start_path_distance_
                 );
@@ -335,11 +344,128 @@ private:
                distanceFromStart(wx, wy) < START_RETURN_GOAL_RADIUS;
     }
 
+    bool isEntranceReturnForbiddenCandidate(
+        double wx,
+        double wy,
+        double start_path_distance) const
+    {
+        if (!hasLeftEntrance()) {
+            return false;
+        }
+
+        const double start_distance = distanceFromStart(wx, wy);
+
+        if (start_distance < ENTRANCE_NO_RETURN_WORLD_RADIUS) {
+            return true;
+        }
+
+        if (start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
+        }
+
+        if (max_start_path_distance_ >= 1.20 &&
+            start_path_distance < ENTRANCE_NO_RETURN_PATH_DISTANCE) {
+            return true;
+        }
+
+        return false;
+    }
+
     bool isBacktrackingTowardEntrance() const
     {
-        return max_start_path_distance_ >= START_PATH_CANCEL_ARM_DISTANCE &&
-               current_start_path_distance_ + START_PATH_CANCEL_BACKTRACK <
-               max_start_path_distance_;
+        // dead-end 탈출을 위한 아주 짧은 후퇴만 허용한다.
+        // 최대 진입 깊이에서 크게 되돌아가면 입구 복귀로 보고 즉시 막는다.
+        if (!hasLeftEntrance()) {
+            return false;
+        }
+
+        if (distanceFromStart(robot_x_, robot_y_) < START_RETURN_CANCEL_RADIUS) {
+            return true;
+        }
+
+        if (distanceFromStart(robot_x_, robot_y_) +
+            NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
+        }
+
+        if (max_start_path_distance_ >= START_PATH_CANCEL_ARM_DISTANCE &&
+            current_start_path_distance_ + START_PATH_CANCEL_BACKTRACK <
+            max_start_path_distance_) {
+            return true;
+        }
+
+        return false;
+    }
+
+    bool violatesNoReturnPolicy(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double wx,
+        double wy)
+    {
+        if (!hasLeftEntrance()) {
+            return false;
+        }
+
+        const double goal_start_distance = distanceFromStart(wx, wy);
+        const double current_start_distance = distanceFromStart(robot_x_, robot_y_);
+
+        if (goal_start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            current_start_distance) {
+            return true;
+        }
+
+        if (goal_start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
+        }
+
+        std::vector<int> start_distances;
+        std::vector<double> start_bottleneck_clearances;
+
+        if (!computeReachableMetricsFrom(
+                map,
+                start_x_,
+                start_y_,
+                false,
+                start_distances,
+                start_bottleneck_clearances)) {
+            return true;
+        }
+
+        int mx = 0;
+        int my = 0;
+
+        if (!worldToMap(map, wx, wy, mx, my)) {
+            return true;
+        }
+
+        const int width = static_cast<int>(map->info.width);
+        const int index = my * width + mx;
+
+        if (start_distances[index] < 0) {
+            return true;
+        }
+
+        const double start_path_distance =
+            start_distances[index] * map->info.resolution;
+
+        if (isEntranceReturnForbiddenCandidate(wx, wy, start_path_distance)) {
+            return true;
+        }
+
+        if (start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
+            current_start_path_distance_) {
+            return true;
+        }
+
+        if (start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
+            max_start_path_distance_) {
+            return true;
+        }
+
+        return false;
     }
 
     bool worldToMap(
@@ -847,31 +973,83 @@ private:
 
         geometry_msgs::msg::PoseStamped next_goal;
 
-        if (!makeLookaheadTurnGoal(latest_map_, next_goal) &&
-            !makeOpenRayGoal(latest_map_, next_goal) &&
-            !makeKeepMovingGoal(latest_map_, next_goal)) {
-            RCLCPP_WARN(this->get_logger(), "지역 진행 goal을 찾지 못했습니다. frontier를 짧게 재탐색합니다.");
+        // v12 핵심:
+        // - 출발 직후에는 frontier가 안정적으로 생기기 전이라 local lookahead로 먼저 전진시킨다.
+        // - 어느 정도 입구에서 벗어나면 progress-frontier를 우선해서 막다른 포켓을 피한다.
+        // - 실패가 반복되면 relaxed frontier와 escape goal을 허용한다.
+        bool found_goal = false;
 
-            if (!findBestFrontier(latest_map_, next_goal)) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "frontier goal도 찾지 못했습니다. blacklist를 초기화하고 local fallback을 시도합니다."
-                );
+        const bool early_start =
+            max_start_distance_ < 0.60 &&
+            current_start_path_distance_ < 0.60 &&
+            consecutive_goal_failures_ == 0;
 
-                blacklist_.clear();
+        if (early_start) {
+            found_goal = makeLookaheadTurnGoal(latest_map_, next_goal) ||
+                         makeOpenRayGoal(latest_map_, next_goal) ||
+                         makeKeepMovingGoal(latest_map_, next_goal);
+        }
 
-                if (!makeKeepMovingGoal(latest_map_, next_goal) &&
-                    !makeEscapeGoal(latest_map_, next_goal)) {
-                    RCLCPP_WARN(
-                        this->get_logger(),
-                        "현재 costmap 기준 goal이 없습니다. 0.5초 후 다시 탐색합니다."
-                    );
-                    if (canUseBackupRecovery()) {
-                        startEscapeRecovery("no reachable Nav2 goal");
-                    }
-                    return false;
-                }
+        if (!found_goal) {
+            found_goal = findBestFrontier(
+                latest_map_,
+                next_goal,
+                consecutive_goal_failures_ > 0);
+        }
+
+        if (!found_goal && consecutive_goal_failures_ == 0 && !hasLeftEntrance()) {
+            found_goal = makeLookaheadTurnGoal(latest_map_, next_goal) ||
+                         makeOpenRayGoal(latest_map_, next_goal) ||
+                         makeKeepMovingGoal(latest_map_, next_goal);
+        }
+
+        if (!found_goal) {
+            blacklist_.clear();
+            if (hasLeftEntrance()) {
+                found_goal = findBestFrontier(latest_map_, next_goal, false) ||
+                             makeKeepMovingGoal(latest_map_, next_goal);
+            } else {
+                found_goal = findBestFrontier(latest_map_, next_goal, true) ||
+                             makeEscapeGoal(latest_map_, next_goal) ||
+                             makeKeepMovingGoal(latest_map_, next_goal);
             }
+        }
+
+        if (!found_goal) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "v12: 보낼 수 있는 frontier/local goal이 없습니다. 다음 tick에서 재시도합니다."
+            );
+            if (canUseBackupRecovery()) {
+                startEscapeRecovery("no reachable v12 goal");
+            }
+            return false;
+        }
+
+        if (violatesNoReturnPolicy(
+                latest_map_,
+                next_goal.pose.position.x,
+                next_goal.pose.position.y)) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "입구 방향 goal 차단: goal=(%.2f, %.2f), goal시작거리=%.2f, 현재거리=%.2f, 최대거리=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
+                next_goal.pose.position.x,
+                next_goal.pose.position.y,
+                distanceFromStart(
+                    next_goal.pose.position.x,
+                    next_goal.pose.position.y
+                ),
+                distanceFromStart(robot_x_, robot_y_),
+                max_start_distance_,
+                current_start_path_distance_,
+                max_start_path_distance_
+            );
+            addBlacklistPoint(
+                next_goal.pose.position.x,
+                next_goal.pose.position.y,
+                BLACKLIST_TTL_CANCEL
+            );
+            return false;
         }
 
         sendGoal(next_goal);
@@ -887,6 +1065,15 @@ private:
         geometry_msgs::msg::Twist stop;
         escape_cmd_pub_->publish(stop);
 
+        if (hasLeftEntrance()) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "입구 복귀 방지를 위해 후진 복구를 생략합니다. reason=%s",
+                reason.c_str()
+            );
+            return;
+        }
+
         escape_active_ = true;
         escape_until_ = this->now() + rclcpp::Duration::from_seconds(ESCAPE_BACKUP_DURATION);
 
@@ -901,6 +1088,10 @@ private:
 
     bool canUseBackupRecovery() const
     {
+        if (hasLeftEntrance()) {
+            return false;
+        }
+
         return consecutive_goal_failures_ >= ESCAPE_BACKUP_MIN_FAILURES &&
                max_start_distance_ >= ESCAPE_BACKUP_MIN_START_DISTANCE &&
                distanceFromStart(robot_x_, robot_y_) >= 0.45;
@@ -929,6 +1120,11 @@ private:
     {
         addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_CANCEL);
         canceling_goal_ = true;
+
+        geometry_msgs::msg::Twist stop;
+        for (int i = 0; i < 3; ++i) {
+            escape_cmd_pub_->publish(stop);
+        }
 
         if (active_goal_handle_) {
             nav_client_->async_cancel_goal(active_goal_handle_);
@@ -1434,6 +1630,13 @@ private:
 
                     const double start_path_distance = start_distances[index] * resolution;
 
+                    if (isEntranceReturnForbiddenCandidate(
+                            wx,
+                            wy,
+                            start_path_distance)) {
+                        continue;
+                    }
+
                     const double path_backtrack_allowance =
                         relaxed ? 0.35 : START_PATH_BACKTRACK_ALLOWANCE;
 
@@ -1779,7 +1982,8 @@ private:
 
     bool findBestFrontier(
         const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        geometry_msgs::msg::PoseStamped& goal)
+        geometry_msgs::msg::PoseStamped& goal,
+        bool allow_backtrack = false)
     {
         const int width = static_cast<int>(map->info.width);
         const int height = static_cast<int>(map->info.height);
@@ -1787,12 +1991,14 @@ private:
         const double origin_x = map->info.origin.position.x;
         const double origin_y = map->info.origin.position.y;
 
-        double min_distance = std::numeric_limits<double>::max();
         bool frontier_found = false;
-
+        double best_score = -std::numeric_limits<double>::max();
         int best_mx = 0;
         int best_my = 0;
         double best_path_bottleneck_clearance = 0.0;
+        double best_start_path_distance = 0.0;
+        double best_current_path_distance = 0.0;
+        int best_cluster_size = 0;
 
         const int dx[4] = {0, 0, -1, 1};
         const int dy[4] = {-1, 1, 0, 0};
@@ -1822,17 +2028,34 @@ private:
 
         int robot_mx = 0;
         int robot_my = 0;
+        double current_start_path = current_start_path_distance_;
 
         if (worldToMap(map, robot_x_, robot_y_, robot_mx, robot_my)) {
             const int robot_index = robot_my * width + robot_mx;
 
             if (start_distances[robot_index] >= 0) {
+                current_start_path = start_distances[robot_index] * resolution;
+                current_start_path_distance_ = current_start_path;
                 max_start_path_distance_ = std::max(
                     max_start_path_distance_,
-                    start_distances[robot_index] * resolution
+                    current_start_path
                 );
             }
         }
+
+        // strict 모드에서는 현재까지 가장 깊게 들어간 거리보다 너무 뒤쪽 frontier는 제외한다.
+        // relaxed 모드에서는 dead-end 탈출을 위해 이 제한을 크게 완화한다.
+        const double backtrack_allowance = allow_backtrack ?
+            RELAXED_BACKTRACK_ALLOWANCE :
+            START_PATH_BACKTRACK_ALLOWANCE;
+
+        const double min_bottleneck = allow_backtrack ?
+            std::max(0.075, PATH_BOTTLENECK_CLEARANCE - 0.030) :
+            PATH_BOTTLENECK_CLEARANCE;
+
+        const double min_goal_clearance = allow_backtrack ?
+            std::max(0.085, MIN_FINAL_GOAL_CLEARANCE - 0.020) :
+            MIN_FINAL_GOAL_CLEARANCE;
 
         for (int my = 1; my < height - 1; ++my) {
             for (int mx = 1; mx < width - 1; ++mx) {
@@ -1880,15 +2103,13 @@ private:
                     continue;
                 }
 
+                // cluster 대표점들을 모두 보되, goal은 frontier 바로 앞의 안전한 reachable cell로 옮긴다.
                 for (const int frontier_index : cluster) {
                     const int frontier_mx = frontier_index % width;
                     const int frontier_my = frontier_index / width;
 
-                    const double frontier_wx =
-                        origin_x + (frontier_mx + 0.5) * resolution;
-
-                    const double frontier_wy =
-                        origin_y + (frontier_my + 0.5) * resolution;
+                    const double frontier_wx = origin_x + (frontier_mx + 0.5) * resolution;
+                    const double frontier_wy = origin_y + (frontier_my + 0.5) * resolution;
 
                     const double frontier_dist =
                         std::hypot(frontier_wx - robot_x_, frontier_wy - robot_y_);
@@ -1900,11 +2121,8 @@ private:
                     const double unit_x = (frontier_wx - robot_x_) / frontier_dist;
                     const double unit_y = (frontier_wy - robot_y_) / frontier_dist;
 
-                    const double candidate_wx =
-                        frontier_wx - (unit_x * GOAL_STANDOFF);
-
-                    const double candidate_wy =
-                        frontier_wy - (unit_y * GOAL_STANDOFF);
+                    const double candidate_wx = frontier_wx - (unit_x * GOAL_STANDOFF);
+                    const double candidate_wy = frontier_wy - (unit_y * GOAL_STANDOFF);
 
                     int candidate_mx = 0;
                     int candidate_my = 0;
@@ -1928,51 +2146,55 @@ private:
                     }
 
                     const int goal_index = goal_my * width + goal_mx;
-                    const double path_bottleneck_clearance =
-                        reachable_bottleneck_clearances[goal_index];
 
-                    if (path_bottleneck_clearance < PATH_BOTTLENECK_CLEARANCE) {
+                    if (reachable_distances[goal_index] < 0 || start_distances[goal_index] < 0) {
                         continue;
                     }
 
-                    if (start_distances[goal_index] < 0) {
+                    const double goal_wx = origin_x + (goal_mx + 0.5) * resolution;
+                    const double goal_wy = origin_y + (goal_my + 0.5) * resolution;
+
+                    if (isInEntranceReturnZone(goal_wx, goal_wy)) {
                         continue;
                     }
 
-                    const double start_path_distance =
-                        start_distances[goal_index] * resolution;
-
-                    if (start_path_distance < MIN_START_PATH_GOAL_DISTANCE) {
-                        continue;
-                    }
-
-                    if (start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
-                        max_start_path_distance_) {
-                        continue;
-                    }
-
-                    const double goal_wx =
-                        origin_x + (goal_mx + 0.5) * resolution;
-
-                    const double goal_wy =
-                        origin_y + (goal_my + 0.5) * resolution;
-
+                    const double current_path_distance = reachable_distances[goal_index] * resolution;
+                    const double start_path_distance = start_distances[goal_index] * resolution;
+                    const double path_bottleneck_clearance = reachable_bottleneck_clearances[goal_index];
                     const double final_goal_distance =
                         std::hypot(goal_wx - robot_x_, goal_wy - robot_y_);
+
+                    if (isEntranceReturnForbiddenCandidate(
+                            goal_wx,
+                            goal_wy,
+                            start_path_distance)) {
+                        continue;
+                    }
 
                     if (final_goal_distance < MIN_FINAL_GOAL_DISTANCE) {
                         continue;
                     }
 
-                    const double final_goal_clearance =
-                        nearestObstacleDistance(map, goal_mx, goal_my, 0.30);
+                    if (start_path_distance < MIN_START_PATH_GOAL_DISTANCE) {
+                        continue;
+                    }
 
-                    if (final_goal_clearance < MIN_FINAL_GOAL_CLEARANCE) {
+                    // strict: 계속 더 깊은 쪽을 우선. relaxed: dead-end 탈출을 위해 뒤쪽 frontier도 허용.
+                    if (start_path_distance + backtrack_allowance < max_start_path_distance_) {
+                        continue;
+                    }
+
+                    if (path_bottleneck_clearance < min_bottleneck) {
+                        continue;
+                    }
+
+                    const double clearance = nearestObstacleDistance(map, goal_mx, goal_my, 0.30);
+
+                    if (clearance < min_goal_clearance) {
                         continue;
                     }
 
                     bool is_blacklisted = false;
-
                     for (const auto& bp : blacklist_) {
                         if (std::hypot(goal_wx - bp.x, goal_wy - bp.y) < BLACKLIST_RADIUS) {
                             is_blacklisted = true;
@@ -1980,66 +2202,56 @@ private:
                         }
                     }
 
-                    if (is_blacklisted) {
+                    if (is_blacklisted && !allow_backtrack) {
                         continue;
                     }
 
-                    const double target_yaw =
-                        std::atan2(frontier_wy - goal_wy, frontier_wx - goal_wx);
-
+                    const double target_yaw = std::atan2(goal_wy - robot_y_, goal_wx - robot_x_);
                     const double angle_diff = std::abs(std::atan2(
                         std::sin(target_yaw - robot_yaw_),
                         std::cos(target_yaw - robot_yaw_)
                     ));
 
-                    const double projection = forwardProjection(goal_wx, goal_wy);
+                    const double open_ratio = openSpaceRatio(map, goal_mx, goal_my, OPEN_SPACE_RADIUS);
+                    const double cluster_length = static_cast<double>(cluster.size()) * resolution;
+                    const double depth_gain = start_path_distance - current_start_path;
+                    const double max_depth_gain = start_path_distance - max_start_path_distance_;
+                    const double backtrack_amount = std::max(0.0, current_start_path - start_path_distance);
 
-                    if (projection < START_LINE_MARGIN) {
-                        continue;
+                    // 점수는 "가까운 열린 공간"이 아니라 "시작점에서 graph상 더 깊은 frontier"를 고르게 만든다.
+                    // 그래서 특정 맵의 출구 방향을 하드코딩하지 않아도, 미로를 계속 진행하는 방향을 선택한다.
+                    double score = 0.0;
+                    score += 5.00 * start_path_distance;
+                    score += 2.00 * std::max(0.0, max_depth_gain);
+                    score += 1.30 * std::max(0.0, depth_gain);
+                    score += 2.40 * path_bottleneck_clearance;
+                    score += 1.20 * clearance;
+                    score += 0.55 * cluster_length;
+                    score += 0.80 * open_ratio;
+                    score -= 0.45 * current_path_distance;
+                    score -= 0.35 * angle_diff;
+                    score -= (allow_backtrack ? 2.00 : 6.00) * backtrack_amount;
+                    score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
+                    score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
+
+                    if (is_blacklisted) {
+                        score -= 1.0;
                     }
 
-                    const double start_alignment =
-                        startHeadingAlignment(goal_wx, goal_wy);
-
-                    if (!hasLeftEntrance() &&
-                        max_start_distance_ < EARLY_FRONT_GATE_DISTANCE &&
-                        start_alignment < MIN_EARLY_START_ALIGNMENT) {
-                        continue;
+                    // 완전히 입구 쪽으로 되돌아가는 후보는 relaxed에서도 낮은 점수를 준다.
+                    if (hasLeftEntrance() && distanceFromStart(goal_wx, goal_wy) < START_RETURN_GOAL_RADIUS) {
+                        score -= 6.0;
                     }
 
-                    if (isInEntranceReturnZone(goal_wx, goal_wy)) {
-                        continue;
-                    }
-
-                    const double path_distance =
-                        reachable_distances[goal_index] * resolution;
-
-                    const double clearance =
-                        nearestObstacleDistance(map, goal_mx, goal_my, 0.30);
-
-                    double score = 0.7 * path_distance;
-
-                    score -= 1.2 * clearance;
-                    score -= PATH_BOTTLENECK_WEIGHT * path_bottleneck_clearance;
-                    score -= FRONTIER_CLUSTER_LENGTH_WEIGHT *
-                             static_cast<double>(cluster.size()) * resolution;
-                    score -= START_DIRECTION_WEIGHT * projection;
-                    score -= START_PATH_PROGRESS_WEIGHT * start_path_distance;
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
-                    score += WALL_CLEARANCE_PENALTY_WEIGHT *
-                             std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
-
-                    if (angle_diff > 1.57) {
-                        score += 0.3;
-                    }
-
-                    if (score < min_distance) {
-                        min_distance = score;
+                    if (!frontier_found || score > best_score) {
+                        frontier_found = true;
+                        best_score = score;
                         best_mx = goal_mx;
                         best_my = goal_my;
                         best_path_bottleneck_clearance = path_bottleneck_clearance;
-                        frontier_found = true;
+                        best_start_path_distance = start_path_distance;
+                        best_current_path_distance = current_path_distance;
+                        best_cluster_size = static_cast<int>(cluster.size());
                     }
                 }
             }
@@ -2051,14 +2263,10 @@ private:
 
         goal.header.frame_id = "map";
         goal.header.stamp = this->now();
-
         goal.pose.position.x = origin_x + (best_mx + 0.5) * resolution;
         goal.pose.position.y = origin_y + (best_my + 0.5) * resolution;
-
         goal.pose.orientation.x = 0.0;
         goal.pose.orientation.y = 0.0;
-        // 프론티어 탐색에서는 최종 방향이 중요하지 않다.
-        // goal 방향을 강제하면 좁은 통로 근처에서 제자리 회전하다 충돌할 수 있다.
         goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
         goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
 
@@ -2067,12 +2275,15 @@ private:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "다음 목표: x=%.2f, y=%.2f, score=%.2f, path_bottleneck=%.2f, start_path_max=%.2f",
+            "v12 frontier goal: x=%.2f, y=%.2f, score=%.2f, start_path=%.2f, current_path=%.2f, bottleneck=%.2f, cluster=%d, relaxed=%d",
             current_goal_x_,
             current_goal_y_,
-            min_distance,
+            best_score,
+            best_start_path_distance,
+            best_current_path_distance,
             best_path_bottleneck_clearance,
-            max_start_path_distance_
+            best_cluster_size,
+            allow_backtrack ? 1 : 0
         );
 
         return true;
@@ -2154,13 +2365,19 @@ private:
         }
 
         updateForwardProgress();
+        if (latest_map_) {
+            updateStartPathProgress(latest_map_);
+        }
 
         const double start_distance = distanceFromStart(robot_x_, robot_y_);
 
-        if (hasLeftEntrance() && start_distance < START_RETURN_CANCEL_RADIUS) {
+        if (hasLeftEntrance() &&
+            (start_distance < START_RETURN_CANCEL_RADIUS ||
+             start_distance + NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+             max_start_distance_)) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "입구 복귀 금지 구역 진입 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f",
+                "입구 복귀 방향 이동 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f",
                 start_distance,
                 max_start_distance_
             );
