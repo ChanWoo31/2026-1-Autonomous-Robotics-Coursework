@@ -1139,7 +1139,6 @@ private:
         }
 
         if (!found_goal) {
-            blacklist_.clear();
             if (hasLeftEntrance()) {
                 found_goal = findBestFrontier(latest_map_, next_goal, false);
 
@@ -2294,6 +2293,18 @@ private:
 
                 const double wx = mapToWorldX(map, mx);
                 const double wy = mapToWorldY(map, my);
+
+                bool is_blacklisted = false;
+                for (const auto& bp : blacklist_) {
+                    if (std::hypot(wx - bp.x, wy - bp.y) < BLACKLIST_RADIUS) {
+                        is_blacklisted = true;
+                        break;
+                    }
+                }
+
+                if (is_blacklisted) {
+                    continue;
+                }
 
                 if (isInEntranceReturnZone(wx, wy) ||
                     distanceFromStart(wx, wy) < ENTRANCE_NO_RETURN_WORLD_RADIUS) {
