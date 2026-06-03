@@ -23,6 +23,7 @@ ament_target_dependencies(
   maze_explorer
   rclcpp
   nav_msgs
+  sensor_msgs
   geometry_msgs
   nav2_msgs
   tf2_ros
