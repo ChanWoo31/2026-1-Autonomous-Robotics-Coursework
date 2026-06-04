@@ -26,11 +26,6 @@ Panels:
     Splitter Ratio: 0.5
   - Class: nav2_rviz_plugins/Navigation 2
     Name: Navigation 2
-  - Class: rviz_common/Time
-    Experimental: false
-    Name: Time
-    SyncMode: 0
-    SyncSource: ""
 Visualization Manager:
   Class: ""
   Displays:
@@ -344,10 +339,8 @@ Window Geometry:
     collapsed: false
   Height: 900
   Hide Left Dock: false
-  Hide Right Dock: false
+  Hide Right Dock: true
   Selection:
-    collapsed: false
-  Time:
     collapsed: false
   Tool Properties:
     collapsed: false
