@@ -1,0 +1,41 @@
+CMakeLists.txt에 추가:
+
+add_executable(cmd_vel_safety_filter_v9 src/cmd_vel_safety_filter_v9.cpp)
+ament_target_dependencies(cmd_vel_safety_filter_v9 rclcpp geometry_msgs sensor_msgs)
+install(TARGETS cmd_vel_safety_filter_v9 DESTINATION lib/${PROJECT_NAME})
+
+package.xml에 없으면 추가:
+
+<depend>sensor_msgs</depend>
+<depend>geometry_msgs</depend>
+
+launch 파일에 safety node 추가:
+
+Node(
+    package='final_test_2_pkg',
+    executable='cmd_vel_safety_filter_v9',
+    name='cmd_vel_safety_filter',
+    output='screen',
+    parameters=[{
+        'nav_cmd_topic': '/cmd_vel_nav',
+        'safe_cmd_topic': '/cmd_vel',
+        'scan_topic': '/scan',
+        'max_linear': 0.12,
+        'max_reverse': 0.06,
+        'max_angular': 1.20,
+        'front_angle_offset': 3.14159,
+        'front_stop': 0.070,
+        'front_slow': 0.180,
+        'side_stop': 0.075,
+        'side_slow': 0.110,
+        'wide_half_width_deg': 24.0,
+        'min_creep_linear': 0.035
+    }]
+)
+
+중요:
+final_test_2_pkg의 현재 구조는 Nav2/maze_explorer 출력이 /cmd_vel_nav로 들어오고,
+safety filter가 검사한 뒤 최종 로봇 구동 토픽 /cmd_vel로 내보내는 방식이다.
+
+따라서 turtlebot3_node 또는 diff_drive_controller는 그대로 /cmd_vel을 받으면 된다.
+대신 Nav2 쪽 최종 cmd_vel 출력은 /cmd_vel_nav로 맞춰야 safety filter가 중간에 들어간다.

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(final_test_u_pkg)
+project(final_test_2_pkg)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)

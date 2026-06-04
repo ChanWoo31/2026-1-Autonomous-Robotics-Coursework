@@ -1,6 +1,5 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
-#include <nav_msgs/msg/path.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
@@ -39,22 +38,6 @@ public:
             std::bind(&MazeExplorer::scanCallback, this, _1)
         );
 
-        plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/plan",
-            10,
-            std::bind(&MazeExplorer::planCallback, this, _1)
-        );
-        received_plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/received_global_plan",
-            10,
-            std::bind(&MazeExplorer::planCallback, this, _1)
-        );
-        global_plan_sub_ = this->create_subscription<nav_msgs::msg::Path>(
-            "/global_plan",
-            10,
-            std::bind(&MazeExplorer::planCallback, this, _1)
-        );
-
         goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
         // Nav2의 cmd_vel을 safety filter로 보내기 위한 입력 토픽.
         // 실제 로봇으로 나가는 /cmd_vel은 safety filter가 publish해야 한다.
@@ -76,27 +59,18 @@ public:
             std::bind(&MazeExplorer::escapeTimerCallback, this)
         );
 
-        entrance_guard_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(50),
-            std::bind(&MazeExplorer::entranceGuardTimerCallback, this)
-        );
-
-        RCLCPP_INFO(this->get_logger(), "maze_explorer v13 entrance-only no-return loaded");
+        RCLCPP_INFO(this->get_logger(), "maze_explorer v12 no-return progress loaded");
     }
 
 private:
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr plan_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr received_plan_sub_;
-    rclcpp::Subscription<nav_msgs::msg::Path>::SharedPtr global_plan_sub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr escape_cmd_pub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
     rclcpp::TimerBase::SharedPtr idle_retry_timer_;
     rclcpp::TimerBase::SharedPtr escape_timer_;
-    rclcpp::TimerBase::SharedPtr entrance_guard_timer_;
     nav_msgs::msg::OccupancyGrid::SharedPtr latest_map_;
     sensor_msgs::msg::LaserScan::SharedPtr latest_scan_;
     rclcpp::Time last_scan_time_;
@@ -108,16 +82,9 @@ private:
     bool goal_in_progress_ = false;
     bool canceling_goal_ = false;
     bool escape_active_ = false;
-    bool active_goal_allows_detour_ = false;
-    bool local_turn_commit_active_ = false;
-    bool scan_drive_escape_active_ = false;
-    bool force_escape_after_cancel_ = false;
     rclcpp::Time escape_until_;
-    rclcpp::Time local_turn_commit_until_;
     double recovery_linear_speed_ = 0.0;
     double recovery_angular_speed_ = 0.0;
-    double local_turn_direction_ = 0.0;
-    double scan_drive_turn_direction_ = 0.0;
 
     double robot_x_ = 0.0;
     double robot_y_ = 0.0;
@@ -168,36 +135,16 @@ private:
     const double START_DIRECTION_WEIGHT = 1.1;
     const double EARLY_FRONT_GATE_DISTANCE = 1.20;
     const double MIN_EARLY_START_ALIGNMENT = 0.10;
-    const double ENTRANCE_ONE_WAY_ARM_PROJECTION = 0.16;
-    const double ENTRANCE_ONE_WAY_BACKTRACK_ALLOWANCE = 0.10;
-    const double ENTRANCE_ONE_WAY_HARD_MIN_PROJECTION = 0.02;
-    const double ENTRANCE_ONE_WAY_CMD_EPS = 0.005;
-    const double ENTRANCE_ONE_WAY_BLOCKED_TURN_SPEED = 0.42;
     const double START_RETURN_ARM_DISTANCE = 0.85;
     const double START_RETURN_GOAL_RADIUS = 0.75;
     const double START_RETURN_CANCEL_RADIUS = 0.50;
     const double ENTRANCE_NO_RETURN_PATH_DISTANCE = 0.75;
-    const double ENTRANCE_RETURN_PATH_FLOOR = 1.20;
-    const double ENTRANCE_PATH_BLOCK_RADIUS = 1.05;
-    const double ENTRANCE_PATH_SKIP_NEAR_ROBOT = 0.25;
-
-    // v13 entrance-only guard:
-    // max_start_distance_ / max_forward_projection_ 감소 자체는 막지 않는다.
-    // 막힌 포켓에서 빠져나오려면 미로 내부 backtracking이 필요하기 때문이다.
-    // 대신 시작 pose 기준 뒤쪽/근처의 "입구 출구 영역"으로 goal/path/cmd가 들어갈 때만 차단한다.
-    const double ENTRANCE_EXIT_BLOCK_RADIUS = 0.55;
-    const double ENTRANCE_EXIT_FORWARD_MARGIN = 0.20;
-    const double ENTRANCE_EXIT_BEHIND_MARGIN = -0.05;
-    const double ENTRANCE_EXIT_CORRIDOR_HALF_WIDTH = 0.45;
-    const double ENTRANCE_EXIT_GUARD_RADIUS = 0.90;
-    const double ENTRANCE_EXIT_GUARD_FORWARD_MARGIN = 0.65;
-
     const double ENTRANCE_NO_RETURN_WORLD_RADIUS = 0.70;
     const double NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE = 0.20;
     const double NO_RETURN_GOAL_BACKTRACK_ALLOWANCE = 0.20;
     const double NO_RETURN_PROJECTION_ARM_DISTANCE = 0.60;
     const double NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE = 0.08;
-    const double RELAXED_BACKTRACK_ALLOWANCE = 0.35;
+    const double RELAXED_BACKTRACK_ALLOWANCE = 0.60;
     const double START_PATH_BACKTRACK_ALLOWANCE = 0.35;
     const double START_PATH_CANCEL_BACKTRACK = 0.60;
     const double START_PATH_CANCEL_ARM_DISTANCE = 0.90;
@@ -220,21 +167,11 @@ private:
     const double OPEN_RAY_MAX_DISTANCE = 1.10;
     const double OPEN_RAY_LINE_CLEARANCE = 0.075;
     const double OPEN_RAY_GOAL_CLEARANCE = 0.105;
-    const double FRONTIER_EXIT_RAY_MAX_DISTANCE = 0.80;
-    const double FRONTIER_EXIT_RAY_MIN_DISTANCE = 0.42;
-    const double FRONTIER_EXIT_RAY_CLEARANCE = 0.075;
-    const double FRONTIER_EXIT_SCORE_WEIGHT = 1.60;
-    const int FRONTIER_MIN_EXIT_RAYS_STRICT = 2;
-    const int FRONTIER_MIN_EXIT_RAYS_RELAXED = 1;
     const double LOOKAHEAD_PIVOT_CLEARANCE = 0.075;
     const double LOOKAHEAD_GOAL_CLEARANCE = 0.105;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
     const double STUCK_TIMEOUT = 5.0;
-    const double POCKET_ESCAPE_STUCK_TIMEOUT = 1.20;
-    const double POCKET_ESCAPE_FRONT_BLOCKED = 0.34;
-    const double POCKET_ESCAPE_DIAGONAL_BLOCKED = 0.34;
-    const double POCKET_ESCAPE_SIDE_BLOCKED = 0.28;
     const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
@@ -256,36 +193,11 @@ private:
     const double LOCAL_ESCAPE_STEP_DISTANCE = 0.45;
     const double LOCAL_ESCAPE_ALIGN_YAW = 0.35;
     const double LOCAL_ESCAPE_MAX_TURN_SPEED = 0.65;
-    const double LOCAL_ESCAPE_TURN_ONLY_YAW = 0.26;
-    const double LOCAL_ESCAPE_TURN_COMMIT_DURATION = 0.80;
-    const double LOCAL_ESCAPE_COMMITTED_TURN_SPEED = 0.42;
-    const double LOCAL_ESCAPE_TURN_BIAS = 0.45;
-    const double LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH = 0.42;
-    const double SCAN_DRIVE_ESCAPE_DURATION = 3.20;
-    const double SCAN_DRIVE_FRONT_GO = 0.23;
-    const double SCAN_DRIVE_FRONT_TURN = 0.18;
-    const double SCAN_DRIVE_LINEAR = 0.055;
-    const double SCAN_DRIVE_TURN_LINEAR = 0.018;
-    const double SCAN_DRIVE_TURN_SPEED = 0.46;
-    const double SCAN_DRIVE_ARC_TURN_SPEED = 0.22;
-    const double SCAN_DRIVE_SIDE_SWITCH_MARGIN = 0.04;
     const double BRANCH_ESCAPE_MIN_PATH_DISTANCE = 0.70;
     const double BRANCH_ESCAPE_MAX_PATH_DISTANCE = 2.40;
+    const double BRANCH_ESCAPE_MAX_START_PATH_LOSS = 1.40;
     const double BRANCH_ESCAPE_MIN_CLEARANCE = 0.090;
     const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.080;
-    const double CONTROLLED_DETOUR_MAX_START_PATH_LOSS = 0.35;
-    const double CONTROLLED_DETOUR_MIN_START_PATH = 0.90;
-    const double CONTROLLED_DETOUR_MIN_WORLD_DISTANCE = 0.80;
-    const double DEPTH_PROGRESS_MIN_GAIN = 0.14;
-    const double DEPTH_PROGRESS_RELAXED_MIN_GAIN = 0.08;
-    const double DEPTH_PROGRESS_MIN_PATH_DISTANCE = 0.35;
-    const double DEPTH_PROGRESS_MAX_PATH_DISTANCE = 1.45;
-    const double DEPTH_PROGRESS_RELAXED_MAX_PATH_DISTANCE = 1.80;
-    const double DEPTH_PROGRESS_MIN_EUCLIDEAN_DISTANCE = 0.24;
-    const double DEPTH_PROGRESS_MIN_CLEARANCE = 0.105;
-    const double DEPTH_PROGRESS_RELAXED_CLEARANCE = 0.090;
-    const double DEPTH_PROGRESS_MIN_BOTTLENECK = 0.095;
-    const double DEPTH_PROGRESS_RELAXED_BOTTLENECK = 0.080;
 
     const double ESCAPE_MIN_DISTANCE = 0.22;
     const double ESCAPE_MAX_DISTANCE = 0.55;
@@ -318,7 +230,7 @@ private:
             if (isBacktrackingTowardEntrance()) {
                 RCLCPP_WARN(
                     this->get_logger(),
-                    "입구 출구 영역 진입 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
+                    "시작점 방향 되감기 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
                     distanceFromStart(robot_x_, robot_y_),
                     max_start_distance_,
                     forwardProjection(robot_x_, robot_y_),
@@ -333,72 +245,13 @@ private:
             return;
         }
 
-        if (force_escape_after_cancel_ && consecutive_goal_failures_ > 0) {
-            continueAfterNavFailure(
-                "map retry forced local escape",
-                false,
-                canUseBackupRecovery());
-            if (goal_in_progress_ || escape_active_) {
-                return;
-            }
-        }
-
-        if (!trySendNextGoal() && consecutive_goal_failures_ > 0) {
-            continueAfterNavFailure(
-                "map retry after Nav2 failure",
-                false,
-                canUseBackupRecovery());
-        }
+        trySendNextGoal();
     }
 
     void scanCallback(const sensor_msgs::msg::LaserScan::SharedPtr msg)
     {
         latest_scan_ = msg;
         last_scan_time_ = this->now();
-    }
-
-    void planCallback(const nav_msgs::msg::Path::SharedPtr msg)
-    {
-        if (!goal_in_progress_ ||
-            canceling_goal_ ||
-            !is_start_position_saved_ ||
-            !hasLeftEntrance()) {
-            return;
-        }
-
-        if (!updateRobotPose()) {
-            return;
-        }
-
-        if (latest_map_) {
-            updateStartPathProgress(latest_map_);
-        }
-
-        for (const auto& pose : msg->poses) {
-            const double wx = pose.pose.position.x;
-            const double wy = pose.pose.position.y;
-
-            if (std::hypot(wx - robot_x_, wy - robot_y_) <
-                ENTRANCE_PATH_SKIP_NEAR_ROBOT) {
-                continue;
-            }
-
-            if (isEntrancePathPoseForbidden(wx, wy)) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "입구 통과 global path 감지. 현재 goal 취소: path_pose=(%.2f, %.2f), start_dist=%.2f, proj=%.2f, current_start_path=%.2f, max_start_path=%.2f",
-                    wx,
-                    wy,
-                    distanceFromStart(wx, wy),
-                    forwardProjection(wx, wy),
-                    current_start_path_distance_,
-                    max_start_path_distance_
-                );
-
-                cancelCurrentGoalAndBlacklist();
-                return;
-            }
-        }
     }
 
     bool updateRobotPose()
@@ -457,63 +310,6 @@ private:
         return ((wx - start_x_) * forward_x) + ((wy - start_y_) * forward_y);
     }
 
-    double lateralDistanceFromStartAxis(double wx, double wy) const
-    {
-        const double forward_x = std::cos(start_yaw_);
-        const double forward_y = std::sin(start_yaw_);
-        const double rel_x = wx - start_x_;
-        const double rel_y = wy - start_y_;
-
-        // start_yaw_ 방향을 미로 안쪽 진행축으로 보고, 그 축에 수직인 거리.
-        return std::abs((-rel_x * forward_y) + (rel_y * forward_x));
-    }
-
-    bool isEntranceExitZone(double wx, double wy) const
-    {
-        if (!is_start_position_saved_ || !hasLeftEntrance()) {
-            return false;
-        }
-
-        const double projection = forwardProjection(wx, wy);
-        const double lateral = lateralDistanceFromStartAxis(wx, wy);
-        const double start_distance = distanceFromStart(wx, wy);
-
-        // 시작점 바로 주변은 실제 입구로 되돌아갈 가능성이 크므로 차단.
-        if (start_distance < ENTRANCE_EXIT_BLOCK_RADIUS) {
-            return true;
-        }
-
-        // 시작선보다 뒤쪽은 입구 밖으로 나가는 방향으로 판단.
-        if (projection < ENTRANCE_EXIT_BEHIND_MARGIN &&
-            lateral < ENTRANCE_EXIT_CORRIDOR_HALF_WIDTH * 1.6) {
-            return true;
-        }
-
-        // 시작선 근처이면서 입구 축 위에 있는 경우만 차단.
-        // 단순히 max distance/projection이 줄어드는 미로 내부 후퇴는 여기 걸리지 않는다.
-        if (projection < ENTRANCE_EXIT_FORWARD_MARGIN &&
-            lateral < ENTRANCE_EXIT_CORRIDOR_HALF_WIDTH) {
-            return true;
-        }
-
-        return false;
-    }
-
-    bool isNearEntranceGuardZone(double wx, double wy) const
-    {
-        if (!is_start_position_saved_ || !hasLeftEntrance()) {
-            return false;
-        }
-
-        const double projection = forwardProjection(wx, wy);
-        const double lateral = lateralDistanceFromStartAxis(wx, wy);
-        const double start_distance = distanceFromStart(wx, wy);
-
-        return start_distance < ENTRANCE_EXIT_GUARD_RADIUS ||
-               (projection < ENTRANCE_EXIT_GUARD_FORWARD_MARGIN &&
-                lateral < ENTRANCE_EXIT_CORRIDOR_HALF_WIDTH * 1.6);
-    }
-
     static double normalizeAngle(double angle)
     {
         while (angle > 3.14159265358979323846) {
@@ -565,39 +361,6 @@ private:
         }
 
         return best;
-    }
-
-    bool isLocallyBoxedIn() const
-    {
-        if (!latest_scan_ ||
-            latest_scan_->ranges.empty() ||
-            latest_scan_->angle_increment <= 0.0 ||
-            (this->now() - last_scan_time_).seconds() > 0.60) {
-            return false;
-        }
-
-        const double pi = 3.14159265358979323846;
-        const double front = scanSectorMin(0.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH);
-        const double left_diagonal = scanSectorMin(pi / 4.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH);
-        const double right_diagonal = scanSectorMin(-pi / 4.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH);
-        const double left = scanSectorMin(pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-        const double right = scanSectorMin(-pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-
-        const bool front_blocked =
-            std::isfinite(front) &&
-            front < POCKET_ESCAPE_FRONT_BLOCKED;
-        const bool left_blocked =
-            (std::isfinite(left_diagonal) &&
-             left_diagonal < POCKET_ESCAPE_DIAGONAL_BLOCKED) ||
-            (std::isfinite(left) &&
-             left < POCKET_ESCAPE_SIDE_BLOCKED);
-        const bool right_blocked =
-            (std::isfinite(right_diagonal) &&
-             right_diagonal < POCKET_ESCAPE_DIAGONAL_BLOCKED) ||
-            (std::isfinite(right) &&
-             right < POCKET_ESCAPE_SIDE_BLOCKED);
-
-        return front_blocked && left_blocked && right_blocked;
     }
 
     double startHeadingAlignment(double wx, double wy) const
@@ -673,74 +436,81 @@ private:
                max_forward_projection_ >= NO_RETURN_PROJECTION_ARM_DISTANCE;
     }
 
-    bool entranceOneWayArmed() const
-    {
-        return is_start_position_saved_ &&
-               (hasLeftEntrance() ||
-                max_forward_projection_ >= ENTRANCE_ONE_WAY_ARM_PROJECTION);
-    }
-
-    bool violatesEntranceOneWayGoal(double wx, double wy) const
-    {
-        if (!entranceOneWayArmed()) {
-            return false;
-        }
-
-        return isEntranceExitZone(wx, wy);
-    }
-
-    bool isEntranceOneWayBacktrackingNow() const
-    {
-        if (!entranceOneWayArmed()) {
-            return false;
-        }
-
-        return isEntranceExitZone(robot_x_, robot_y_);
-    }
-
     bool isInEntranceReturnZone(double wx, double wy) const
     {
-        return isEntranceExitZone(wx, wy);
-    }
-
-    bool isEntrancePathPoseForbidden(double wx, double wy) const
-    {
-        return isEntranceExitZone(wx, wy);
+        return hasLeftEntrance() &&
+               distanceFromStart(wx, wy) < START_RETURN_GOAL_RADIUS;
     }
 
     bool isEntranceReturnForbiddenCandidate(
         double wx,
         double wy,
-        double /*start_path_distance*/) const
-    {
-        return isEntranceExitZone(wx, wy);
-    }
-
-    bool isControlledDetourCandidate(
-        double wx,
-        double wy,
-        double /*start_path_distance*/) const
+        double start_path_distance) const
     {
         if (!hasLeftEntrance()) {
             return false;
         }
 
-        // v13: 미로 내부의 우회/후퇴는 허용한다.
-        // 시작점 거리나 start_path_distance가 줄었다는 이유만으로 차단하지 않는다.
-        // 실제 입구 출구 영역으로 들어가는 후보만 막는다.
-        return !isEntranceExitZone(wx, wy);
+        const double start_distance = distanceFromStart(wx, wy);
+        const double projection = forwardProjection(wx, wy);
+
+        if (start_distance < ENTRANCE_NO_RETURN_WORLD_RADIUS) {
+            return true;
+        }
+
+        if (projection < START_LINE_MARGIN) {
+            return true;
+        }
+
+        if (projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+            max_forward_projection_) {
+            return true;
+        }
+
+        if (start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
+        }
+
+        if (max_start_path_distance_ >= 1.20 &&
+            start_path_distance < ENTRANCE_NO_RETURN_PATH_DISTANCE) {
+            return true;
+        }
+
+        return false;
     }
 
     bool isBacktrackingTowardEntrance() const
     {
+        // dead-end 탈출을 위한 아주 짧은 후퇴만 허용한다.
+        // 최대 진입 깊이에서 크게 되돌아가면 입구 복귀로 보고 즉시 막는다.
         if (!hasLeftEntrance()) {
             return false;
         }
 
-        // v13: projection/distance 감소 자체를 backtracking으로 보지 않는다.
-        // 막힌 길에서 빠져나오는 내부 후퇴는 허용하고,
-        // 로봇이 실제 입구 출구 영역에 들어왔을 때만 취소한다.
-        return isEntranceExitZone(robot_x_, robot_y_);
+        if (distanceFromStart(robot_x_, robot_y_) < START_RETURN_CANCEL_RADIUS) {
+            return true;
+        }
+
+        if (forwardProjection(robot_x_, robot_y_) +
+            NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+            max_forward_projection_) {
+            return true;
+        }
+
+        if (distanceFromStart(robot_x_, robot_y_) +
+            NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
+        }
+
+        if (max_start_path_distance_ >= START_PATH_CANCEL_ARM_DISTANCE &&
+            current_start_path_distance_ + START_PATH_CANCEL_BACKTRACK <
+            max_start_path_distance_) {
+            return true;
+        }
+
+        return false;
     }
 
     bool violatesNoReturnPolicy(
@@ -750,6 +520,35 @@ private:
     {
         if (!hasLeftEntrance()) {
             return false;
+        }
+
+        const double goal_start_distance = distanceFromStart(wx, wy);
+        const double current_start_distance = distanceFromStart(robot_x_, robot_y_);
+        const double goal_projection = forwardProjection(wx, wy);
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
+
+        if (goal_projection < START_LINE_MARGIN) {
+            return true;
+        }
+
+        if (goal_projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+            current_projection) {
+            return true;
+        }
+
+        if (goal_projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+            max_forward_projection_) {
+            return true;
+        }
+
+        if (goal_start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            current_start_distance) {
+            return true;
+        }
+
+        if (goal_start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+            max_start_distance_) {
+            return true;
         }
 
         std::vector<int> start_distances;
@@ -786,42 +585,17 @@ private:
             return true;
         }
 
-        return false;
-    }
-
-    bool pathToGoalAvoidsEntrance(
-        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        double wx,
-        double wy)
-    {
-        if (!hasLeftEntrance()) {
+        if (start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
+            current_start_path_distance_) {
             return true;
         }
 
-        int goal_mx = 0;
-        int goal_my = 0;
-
-        if (!worldToMap(map, wx, wy, goal_mx, goal_my)) {
-            return false;
+        if (start_path_distance + START_PATH_BACKTRACK_ALLOWANCE <
+            max_start_path_distance_) {
+            return true;
         }
 
-        std::vector<int> distances;
-        std::vector<double> bottleneck_clearances;
-
-        if (!computeReachableMetricsFrom(
-                map,
-                robot_x_,
-                robot_y_,
-                true,
-                distances,
-                bottleneck_clearances)) {
-            return false;
-        }
-
-        const int width = static_cast<int>(map->info.width);
-        const int index = goal_my * width + goal_mx;
-
-        return distances[index] >= 0;
+        return false;
     }
 
     bool worldToMap(
@@ -1216,7 +990,11 @@ private:
                     map->info.origin.position.y + (ny + 0.5) * map->info.resolution;
 
                 if (block_entrance_return_zone &&
-                    isEntrancePathPoseForbidden(neighbor_wx, neighbor_wy)) {
+                    (isInEntranceReturnZone(neighbor_wx, neighbor_wy) ||
+                     forwardProjection(neighbor_wx, neighbor_wy) < START_LINE_MARGIN ||
+                     forwardProjection(neighbor_wx, neighbor_wy) +
+                     NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+                     max_forward_projection_)) {
                     continue;
                 }
 
@@ -1328,7 +1106,7 @@ private:
         pruneExpiredBlacklist();
 
         geometry_msgs::msg::PoseStamped next_goal;
-        bool allow_controlled_detour_goal = false;
+        bool allow_branch_escape_goal = false;
 
         // v12 핵심:
         // - 출발 직후에는 frontier가 안정적으로 생기기 전이라 local lookahead로 먼저 전진시킨다.
@@ -1347,17 +1125,11 @@ private:
                          makeKeepMovingGoal(latest_map_, next_goal);
         }
 
-        if (!found_goal && hasLeftEntrance() && consecutive_goal_failures_ > 0) {
-            found_goal = makeDepthProgressGoal(latest_map_, next_goal, true);
-        }
-
         if (!found_goal) {
-            const bool relaxed_frontier = consecutive_goal_failures_ > 0;
             found_goal = findBestFrontier(
                 latest_map_,
                 next_goal,
-                relaxed_frontier);
-            allow_controlled_detour_goal = found_goal && relaxed_frontier && hasLeftEntrance();
+                consecutive_goal_failures_ > 0);
         }
 
         if (!found_goal && consecutive_goal_failures_ == 0 && !hasLeftEntrance()) {
@@ -1371,18 +1143,8 @@ private:
                 found_goal = findBestFrontier(latest_map_, next_goal, false);
 
                 if (!found_goal) {
-                    found_goal = makeDepthProgressGoal(latest_map_, next_goal, false) ||
-                                 makeDepthProgressGoal(latest_map_, next_goal, true);
-                }
-
-                if (!found_goal) {
-                    found_goal = makeLookaheadTurnGoal(latest_map_, next_goal) ||
-                                 makeOpenRayGoal(latest_map_, next_goal);
-                }
-
-                if (!found_goal) {
                     found_goal = makeBranchEscapeGoal(latest_map_, next_goal);
-                    allow_controlled_detour_goal = found_goal;
+                    allow_branch_escape_goal = found_goal;
                 }
 
                 if (!found_goal) {
@@ -1402,56 +1164,14 @@ private:
             );
             if (canUseBackupRecovery()) {
                 startEscapeRecovery("no reachable v12 goal");
-            }
-
-            if (!escape_active_ && !goal_in_progress_ && !canceling_goal_) {
+            } else {
                 startForwardCreep("no reachable v12 goal");
             }
-            return goal_in_progress_ || escape_active_;
+            return true;
         }
 
-        auto recoverFromBlockedEntranceGoal = [&](const std::string& reason) {
-            addBlacklistPoint(
-                next_goal.pose.position.x,
-                next_goal.pose.position.y,
-                BLACKLIST_TTL_CANCEL
-            );
-
-            if (hasLeftEntrance() &&
-                makeDepthProgressGoal(latest_map_, next_goal, true) &&
-                !violatesNoReturnPolicy(
-                    latest_map_,
-                    next_goal.pose.position.x,
-                    next_goal.pose.position.y) &&
-                pathToGoalAvoidsEntrance(
-                    latest_map_,
-                    next_goal.pose.position.x,
-                    next_goal.pose.position.y)) {
-                if (sendGoal(next_goal)) {
-                    return true;
-                }
-            }
-
-            if (hasLeftEntrance() &&
-                makeBranchEscapeGoal(latest_map_, next_goal) &&
-                !violatesNoReturnPolicy(
-                    latest_map_,
-                    next_goal.pose.position.x,
-                    next_goal.pose.position.y) &&
-                pathToGoalAvoidsEntrance(
-                    latest_map_,
-                    next_goal.pose.position.x,
-                    next_goal.pose.position.y)) {
-                if (sendGoal(next_goal, true)) {
-                    return true;
-                }
-            }
-
-            startForwardCreep(reason);
-            return goal_in_progress_ || escape_active_;
-        };
-
-        if (violatesNoReturnPolicy(
+        if (!allow_branch_escape_goal &&
+            violatesNoReturnPolicy(
                 latest_map_,
                 next_goal.pose.position.x,
                 next_goal.pose.position.y)) {
@@ -1475,28 +1195,17 @@ private:
                 current_start_path_distance_,
                 max_start_path_distance_
             );
-            return recoverFromBlockedEntranceGoal("blocked entrance-direction goal");
-        }
-
-        if (!pathToGoalAvoidsEntrance(
-                latest_map_,
-                next_goal.pose.position.x,
-                next_goal.pose.position.y)) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "입구 통과 경로 goal 차단: goal=(%.2f, %.2f), 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f",
+            addBlacklistPoint(
                 next_goal.pose.position.x,
                 next_goal.pose.position.y,
-                distanceFromStart(robot_x_, robot_y_),
-                max_start_distance_,
-                forwardProjection(robot_x_, robot_y_),
-                max_forward_projection_
+                BLACKLIST_TTL_CANCEL
             );
-
-            return recoverFromBlockedEntranceGoal("blocked entrance-crossing path");
+            startForwardCreep("blocked entrance-direction goal");
+            return true;
         }
 
-        return sendGoal(next_goal, allow_controlled_detour_goal);
+        sendGoal(next_goal);
+        return true;
     }
 
     void startEscapeRecovery(const std::string& reason)
@@ -1508,22 +1217,17 @@ private:
         geometry_msgs::msg::Twist stop;
         escape_cmd_pub_->publish(stop);
 
-        if (isNearEntranceGuardZone(robot_x_, robot_y_) && entranceOneWayArmed()) {
+        if (hasLeftEntrance()) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "입구 근처이므로 후진 복구를 생략합니다. dist=%.2f, proj=%.2f, reason=%s",
-                distanceFromStart(robot_x_, robot_y_),
-                forwardProjection(robot_x_, robot_y_),
+                "입구 복귀 방지를 위해 후진 복구를 생략합니다. reason=%s",
                 reason.c_str()
             );
             return;
         }
 
         escape_active_ = true;
-        scan_drive_escape_active_ = false;
         escape_until_ = this->now() + rclcpp::Duration::from_seconds(ESCAPE_BACKUP_DURATION);
-        local_turn_commit_active_ = false;
-        local_turn_direction_ = 0.0;
         recovery_linear_speed_ = -ESCAPE_BACKUP_SPEED;
         recovery_angular_speed_ = 0.0;
 
@@ -1536,195 +1240,6 @@ private:
         );
     }
 
-    void startScanDriveEscape(const std::string& reason)
-    {
-        if (escape_active_ || goal_in_progress_ || canceling_goal_) {
-            return;
-        }
-
-        if (!updateRobotPose()) {
-            return;
-        }
-
-        const double pi = 3.14159265358979323846;
-        double left_clearance = scanSectorMin(pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-        double right_clearance = scanSectorMin(-pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-
-        if (!std::isfinite(left_clearance)) {
-            left_clearance = 0.0;
-        }
-
-        if (!std::isfinite(right_clearance)) {
-            right_clearance = 0.0;
-        }
-
-        const double clearer_direction =
-            left_clearance >= right_clearance ? 1.0 : -1.0;
-        const bool side_clearance_has_strong_preference =
-            std::abs(left_clearance - right_clearance) >= SCAN_DRIVE_SIDE_SWITCH_MARGIN;
-
-        if (side_clearance_has_strong_preference ||
-            !local_turn_commit_active_ ||
-            std::abs(local_turn_direction_) <= 0.5) {
-            scan_drive_turn_direction_ = clearer_direction;
-        } else {
-            scan_drive_turn_direction_ = local_turn_direction_;
-        }
-
-        local_turn_commit_active_ = true;
-        local_turn_direction_ = scan_drive_turn_direction_;
-        local_turn_commit_until_ =
-            this->now() + rclcpp::Duration::from_seconds(SCAN_DRIVE_ESCAPE_DURATION);
-
-        scan_drive_escape_active_ = true;
-        escape_active_ = true;
-        escape_until_ =
-            this->now() + rclcpp::Duration::from_seconds(SCAN_DRIVE_ESCAPE_DURATION);
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "반복 실패 scan-drive 탈출 시작: turn_dir=%.0f, left=%.2f, right=%.2f, duration=%.1f, reason=%s",
-            scan_drive_turn_direction_,
-            left_clearance,
-            right_clearance,
-            SCAN_DRIVE_ESCAPE_DURATION,
-            reason.c_str()
-        );
-    }
-
-    geometry_msgs::msg::Twist makeScanDriveEscapeCommand()
-    {
-        geometry_msgs::msg::Twist cmd;
-
-        const double pi = 3.14159265358979323846;
-        const bool scan_ready =
-            latest_scan_ &&
-            !latest_scan_->ranges.empty() &&
-            latest_scan_->angle_increment > 0.0 &&
-            (this->now() - last_scan_time_).seconds() <= 0.60;
-
-        if (!scan_ready) {
-            cmd.angular.z = scan_drive_turn_direction_ * SCAN_DRIVE_TURN_SPEED;
-            return cmd;
-        }
-
-        double front_clearance = scanSectorMin(0.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH);
-        double left_clearance = scanSectorMin(pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-        double right_clearance = scanSectorMin(-pi / 2.0, LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH);
-
-        if (!std::isfinite(front_clearance)) {
-            front_clearance = 0.0;
-        }
-
-        if (!std::isfinite(left_clearance)) {
-            left_clearance = 0.0;
-        }
-
-        if (!std::isfinite(right_clearance)) {
-            right_clearance = 0.0;
-        }
-
-        const double clearer_direction =
-            left_clearance >= right_clearance ? 1.0 : -1.0;
-
-        if (front_clearance < SCAN_DRIVE_FRONT_TURN) {
-            scan_drive_turn_direction_ =
-                0.75 * scan_drive_turn_direction_ + 0.25 * clearer_direction;
-            scan_drive_turn_direction_ =
-                scan_drive_turn_direction_ >= 0.0 ? 1.0 : -1.0;
-
-            cmd.linear.x = SCAN_DRIVE_TURN_LINEAR;
-            cmd.angular.z = scan_drive_turn_direction_ * SCAN_DRIVE_TURN_SPEED;
-            return cmd;
-        }
-
-        cmd.linear.x = SCAN_DRIVE_LINEAR;
-
-        if (front_clearance < SCAN_DRIVE_FRONT_GO) {
-            cmd.angular.z = scan_drive_turn_direction_ * SCAN_DRIVE_ARC_TURN_SPEED;
-            return cmd;
-        }
-
-        const double side_balance = std::clamp(
-            left_clearance - right_clearance,
-            -0.20,
-            0.20
-        );
-
-        cmd.angular.z =
-            scan_drive_turn_direction_ * 0.08 + 0.65 * side_balance;
-        cmd.angular.z = std::clamp(
-            cmd.angular.z,
-            -SCAN_DRIVE_ARC_TURN_SPEED,
-            SCAN_DRIVE_ARC_TURN_SPEED
-        );
-
-        return cmd;
-    }
-
-    void enforceEntranceOneWayOnCommand(
-        geometry_msgs::msg::Twist& cmd,
-        const std::string& source)
-    {
-        if (!entranceOneWayArmed() || std::abs(cmd.linear.x) < 1e-6) {
-            return;
-        }
-
-        updateRobotPose();
-
-        const double projection_velocity =
-            cmd.linear.x * std::cos(robot_yaw_ - start_yaw_);
-
-        if (projection_velocity >= -ENTRANCE_ONE_WAY_CMD_EPS) {
-            return;
-        }
-
-        // v13 핵심: 미로 내부에서는 후퇴를 허용한다.
-        // 단, 로봇이 시작 입구 근처/시작축 위에 있을 때 입구 밖 방향 속도만 차단한다.
-        if (!isNearEntranceGuardZone(robot_x_, robot_y_)) {
-            return;
-        }
-
-        cmd.linear.x = 0.0;
-
-        const double yaw_to_forward = std::atan2(
-            std::sin(start_yaw_ - robot_yaw_),
-            std::cos(start_yaw_ - robot_yaw_)
-        );
-        double turn_direction =
-            std::abs(yaw_to_forward) > 0.08 ?
-            (yaw_to_forward > 0.0 ? 1.0 : -1.0) :
-            0.0;
-
-        if (turn_direction == 0.0 && std::abs(scan_drive_turn_direction_) > 0.5) {
-            turn_direction = scan_drive_turn_direction_;
-        }
-
-        if (turn_direction == 0.0 && std::abs(local_turn_direction_) > 0.5) {
-            turn_direction = local_turn_direction_;
-        }
-
-        if (turn_direction == 0.0) {
-            turn_direction = 1.0;
-        }
-
-        cmd.angular.z = turn_direction * std::max(
-            std::abs(cmd.angular.z),
-            ENTRANCE_ONE_WAY_BLOCKED_TURN_SPEED
-        );
-
-        RCLCPP_WARN_THROTTLE(
-            this->get_logger(),
-            *this->get_clock(),
-            1000,
-            "입구 one-way gate: 입구 근처의 시작선 밖 방향 속도만 차단. source=%s, proj_vel=%.3f, dist=%.2f, proj=%.2f",
-            source.c_str(),
-            projection_velocity,
-            distanceFromStart(robot_x_, robot_y_),
-            forwardProjection(robot_x_, robot_y_)
-        );
-    }
-
     void startForwardCreep(const std::string& reason)
     {
         if (escape_active_ || goal_in_progress_ || canceling_goal_) {
@@ -1733,34 +1248,6 @@ private:
 
         if (!updateRobotPose()) {
             return;
-        }
-
-        if (consecutive_goal_failures_ >= 2) {
-            geometry_msgs::msg::PoseStamped recovery_goal;
-            if (latest_map_ &&
-                hasLeftEntrance() &&
-                (makeDepthProgressGoal(latest_map_, recovery_goal, true) ||
-                 makeKeepMovingGoal(latest_map_, recovery_goal)) &&
-                !violatesNoReturnPolicy(
-                    latest_map_,
-                    recovery_goal.pose.position.x,
-                    recovery_goal.pose.position.y)) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "반복 실패 후 scan-drive 대신 새 goal을 보냅니다. reason=%s, failures=%d",
-                    reason.c_str(),
-                    consecutive_goal_failures_
-                );
-                if (sendGoal(recovery_goal)) {
-                    return;
-                }
-            }
-        }
-
-        const rclcpp::Time now = this->now();
-        if (local_turn_commit_active_ && now >= local_turn_commit_until_) {
-            local_turn_commit_active_ = false;
-            local_turn_direction_ = 0.0;
         }
 
         const double current_projection = forwardProjection(robot_x_, robot_y_);
@@ -1796,52 +1283,59 @@ private:
         double best_scan_only_yaw = robot_yaw_;
         double best_scan_only_clearance = 0.0;
 
-        const double front_scan_clearance = scan_ready ?
-            scanSectorMin(0.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH) :
-            std::numeric_limits<double>::infinity();
-        const double front_ray_distance = rayClearDistance(
-            latest_map_,
-            robot_yaw_,
-            LOCAL_ESCAPE_RAY_MAX_DISTANCE,
-            LOCAL_ESCAPE_RAY_CLEARANCE
-        );
-        const bool front_scan_blocks =
-            scan_ready &&
-            std::isfinite(front_scan_clearance) &&
-            front_scan_clearance < LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE;
-        const double forward_projection = forwardProjection(
-            robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
-            robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
-        );
-
-        if (!front_scan_blocks &&
-            front_ray_distance >= LOCAL_ESCAPE_FORWARD_RAY_DISTANCE) {
-            local_turn_commit_active_ = false;
-            local_turn_direction_ = 0.0;
-            recovery_linear_speed_ = FORWARD_CREEP_SPEED;
-            recovery_angular_speed_ = 0.0;
-            escape_active_ = true;
-            escape_until_ = now + rclcpp::Duration::from_seconds(FORWARD_CREEP_DURATION);
-
-            RCLCPP_WARN(
-                this->get_logger(),
-                "Nav2 goal 없이 전방 유지 이동: linear=%.3f, scan_ready=%d, scan=%.2f, map_ray=%.2f, proj=%.2f -> %.2f, reason=%s",
-                recovery_linear_speed_,
-                scan_ready ? 1 : 0,
-                std::isfinite(front_scan_clearance) ? front_scan_clearance : -1.0,
-                front_ray_distance,
-                current_projection,
-                forward_projection,
-                reason.c_str()
+        if (scan_ready) {
+            const double front_scan_clearance = scanSectorMin(
+                0.0,
+                LOCAL_ESCAPE_SCAN_HALF_WIDTH
             );
-            return;
+            const double front_ray_distance = rayClearDistance(
+                latest_map_,
+                robot_yaw_,
+                LOCAL_ESCAPE_RAY_MAX_DISTANCE,
+                LOCAL_ESCAPE_RAY_CLEARANCE
+            );
+            const double forward_projection = forwardProjection(
+                robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
+                robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
+            );
+            const bool forward_keeps_progress =
+                !hasLeftEntrance() ||
+                forward_projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE >=
+                current_projection;
+
+            if (front_scan_clearance >= LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE &&
+                front_ray_distance >= LOCAL_ESCAPE_FORWARD_RAY_DISTANCE &&
+                forward_keeps_progress) {
+                recovery_linear_speed_ = FORWARD_CREEP_SPEED;
+                recovery_angular_speed_ = 0.0;
+                escape_active_ = true;
+                escape_until_ = this->now() + rclcpp::Duration::from_seconds(FORWARD_CREEP_DURATION);
+
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "Nav2 goal 없이 전방 유지 이동: linear=%.3f, scan=%.2f, map_ray=%.2f, proj=%.2f -> %.2f, reason=%s",
+                    recovery_linear_speed_,
+                    front_scan_clearance,
+                    front_ray_distance,
+                    current_projection,
+                    forward_projection,
+                    reason.c_str()
+                );
+                return;
+            }
         }
 
         for (const double offset : angle_offsets) {
             const double yaw = robot_yaw_ + offset;
-            const double scan_clearance = scan_ready ?
-                scanSectorMin(offset, LOCAL_ESCAPE_SCAN_HALF_WIDTH) :
-                std::numeric_limits<double>::infinity();
+
+            if (!scan_ready) {
+                continue;
+            }
+
+            const double scan_clearance = scanSectorMin(
+                offset,
+                LOCAL_ESCAPE_SCAN_HALF_WIDTH
+            );
 
             const double scan_step_projection = forwardProjection(
                 robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(yaw),
@@ -1858,9 +1352,7 @@ private:
                 best_scan_only_clearance = scan_clearance;
             }
 
-            if (scan_ready &&
-                std::isfinite(scan_clearance) &&
-                scan_clearance < LOCAL_ESCAPE_MIN_SCAN_DISTANCE) {
+            if (scan_clearance < LOCAL_ESCAPE_MIN_SCAN_DISTANCE) {
                 continue;
             }
 
@@ -1884,24 +1376,23 @@ private:
             const double wy = robot_y_ + step_distance * std::sin(yaw);
             const double projected_next = forwardProjection(wx, wy);
 
+            if (hasLeftEntrance() &&
+                projected_next + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+                current_projection) {
+                continue;
+            }
+
+            if (hasLeftEntrance() &&
+                projected_next + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+                max_forward_projection_ - 0.25) {
+                continue;
+            }
+
             double score = 0.0;
             score += 2.00 * ray_distance;
-            score += 1.20 * std::min(
-                std::isfinite(scan_clearance) ?
-                    scan_clearance :
-                    LOCAL_ESCAPE_RAY_MAX_DISTANCE,
-                LOCAL_ESCAPE_RAY_MAX_DISTANCE
-            );
+            score += 1.20 * std::min(scan_clearance, LOCAL_ESCAPE_RAY_MAX_DISTANCE);
             score += 1.60 * (projected_next - current_projection);
             score -= 0.35 * std::abs(offset);
-
-            if (local_turn_commit_active_ &&
-                std::abs(local_turn_direction_) > 0.5 &&
-                std::abs(offset) > 0.05) {
-                const double offset_direction = offset > 0.0 ? 1.0 : -1.0;
-                score += LOCAL_ESCAPE_TURN_BIAS *
-                         local_turn_direction_ * offset_direction;
-            }
 
             if (!found_direction || score > best_score) {
                 found_direction = true;
@@ -1925,64 +1416,6 @@ private:
             std::cos(best_yaw - robot_yaw_)
         );
 
-        auto chooseTurnDirection = [&]() {
-            if (local_turn_commit_active_ &&
-                std::abs(local_turn_direction_) > 0.5) {
-                return local_turn_direction_;
-            }
-
-            if (std::abs(yaw_error) > 0.08) {
-                return yaw_error > 0.0 ? 1.0 : -1.0;
-            }
-
-            if (scan_ready) {
-                const double left_clearance = scanSectorMin(
-                    pi / 2.0,
-                    LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH
-                );
-                const double right_clearance = scanSectorMin(
-                    -pi / 2.0,
-                    LOCAL_ESCAPE_SIDE_SCAN_HALF_WIDTH
-                );
-
-                if (std::isfinite(left_clearance) ||
-                    std::isfinite(right_clearance)) {
-                    return left_clearance >= right_clearance ? 1.0 : -1.0;
-                }
-            }
-
-            return local_turn_direction_ >= 0.0 ? 1.0 : -1.0;
-        };
-
-        const bool turn_first = !found_direction;
-
-        if (turn_first) {
-            const double turn_direction = chooseTurnDirection();
-            local_turn_commit_active_ = true;
-            local_turn_direction_ = turn_direction;
-            local_turn_commit_until_ =
-                now + rclcpp::Duration::from_seconds(LOCAL_ESCAPE_TURN_COMMIT_DURATION);
-
-            recovery_linear_speed_ = 0.0;
-            recovery_angular_speed_ =
-                turn_direction * LOCAL_ESCAPE_COMMITTED_TURN_SPEED;
-            escape_active_ = true;
-            escape_until_ = local_turn_commit_until_;
-
-            RCLCPP_WARN(
-                this->get_logger(),
-                "도리도리 방지 고정 회전: angular=%.3f, yaw_error=%.2f, found=%d, scan=%.2f, reason=%s",
-                recovery_angular_speed_,
-                yaw_error,
-                found_direction ? 1 : 0,
-                best_scan_clearance,
-                reason.c_str()
-            );
-            return;
-        }
-
-        local_turn_commit_active_ = false;
-        local_turn_direction_ = 0.0;
         recovery_linear_speed_ = FORWARD_CREEP_SPEED;
         recovery_angular_speed_ = std::clamp(
             1.20 * yaw_error,
@@ -2009,15 +1442,13 @@ private:
                 robot_x_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
                 robot_y_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
             );
-            const bool reverse_hits_entrance_guard =
-                entranceOneWayArmed() &&
-                isNearEntranceGuardZone(
-                    robot_x_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
-                    robot_y_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
-                );
+            const bool reverse_keeps_progress =
+                !hasLeftEntrance() ||
+                reverse_projection + LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE >=
+                current_projection;
 
             if (rear_clearance > LOCAL_ESCAPE_REVERSE_SCAN_DISTANCE &&
-                !reverse_hits_entrance_guard) {
+                reverse_keeps_progress) {
                 recovery_linear_speed_ = -LOCAL_ESCAPE_REVERSE_SPEED;
                 recovery_angular_speed_ = 0.0;
                 best_scan_clearance = rear_clearance;
@@ -2026,7 +1457,7 @@ private:
         }
 
         escape_active_ = true;
-        escape_until_ = now + rclcpp::Duration::from_seconds(FORWARD_CREEP_DURATION);
+        escape_until_ = this->now() + rclcpp::Duration::from_seconds(FORWARD_CREEP_DURATION);
 
         RCLCPP_WARN(
             this->get_logger(),
@@ -2045,7 +1476,7 @@ private:
 
     bool canUseBackupRecovery() const
     {
-        if (entranceOneWayArmed() && isNearEntranceGuardZone(robot_x_, robot_y_)) {
+        if (hasLeftEntrance()) {
             return false;
         }
 
@@ -2063,68 +1494,17 @@ private:
         geometry_msgs::msg::Twist cmd;
 
         if (this->now() < escape_until_) {
-            if (scan_drive_escape_active_) {
-                cmd = makeScanDriveEscapeCommand();
-            } else {
-                cmd.linear.x = recovery_linear_speed_;
-                cmd.angular.z = recovery_angular_speed_;
-            }
-            enforceEntranceOneWayOnCommand(cmd, "escape_timer");
+            cmd.linear.x = recovery_linear_speed_;
+            cmd.angular.z = recovery_angular_speed_;
             escape_cmd_pub_->publish(cmd);
             return;
         }
 
         escape_cmd_pub_->publish(cmd);
         escape_active_ = false;
-        scan_drive_escape_active_ = false;
         recovery_linear_speed_ = 0.0;
         recovery_angular_speed_ = 0.0;
-        if (!trySendNextGoal() && consecutive_goal_failures_ > 0) {
-            continueAfterNavFailure(
-                "idle retry after Nav2 failure",
-                false,
-                canUseBackupRecovery());
-        }
-    }
-
-    void entranceGuardTimerCallback()
-    {
-        if (!entranceOneWayArmed()) {
-            return;
-        }
-
-        if (!updateRobotPose()) {
-            return;
-        }
-
-        if (!isEntranceOneWayBacktrackingNow()) {
-            return;
-        }
-
-        geometry_msgs::msg::Twist stop;
-        for (int i = 0; i < 3; ++i) {
-            escape_cmd_pub_->publish(stop);
-        }
-
-        if (escape_active_) {
-            escape_active_ = false;
-            scan_drive_escape_active_ = false;
-            recovery_linear_speed_ = 0.0;
-            recovery_angular_speed_ = 0.0;
-        }
-
-        RCLCPP_WARN_THROTTLE(
-            this->get_logger(),
-            *this->get_clock(),
-            1000,
-            "입구 one-way gate: 입구 출구 영역 진입 차단. dist=%.2f, projection=%.2f",
-            distanceFromStart(robot_x_, robot_y_),
-            forwardProjection(robot_x_, robot_y_)
-        );
-
-        if (goal_in_progress_ && !canceling_goal_) {
-            cancelCurrentGoalAndBlacklist();
-        }
+        trySendNextGoal();
     }
 
     void cancelCurrentGoalAndBlacklist()
@@ -2142,7 +1522,6 @@ private:
         } else {
             goal_in_progress_ = false;
             canceling_goal_ = false;
-            active_goal_allows_detour_ = false;
         }
     }
 
@@ -2179,80 +1558,6 @@ private:
         }
 
         return last_safe_distance;
-    }
-
-    int goalExitRayCount(
-        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        double goal_x,
-        double goal_y,
-        double& exit_score,
-        double& best_ray,
-        int& non_return_rays)
-    {
-        const double pi = 3.14159265358979323846;
-        const std::vector<double> angles = {
-            0.0,
-            pi / 8.0,
-            -pi / 8.0,
-            pi / 4.0,
-            -pi / 4.0,
-            3.0 * pi / 8.0,
-            -3.0 * pi / 8.0,
-            pi / 2.0,
-            -pi / 2.0,
-            5.0 * pi / 8.0,
-            -5.0 * pi / 8.0,
-            3.0 * pi / 4.0,
-            -3.0 * pi / 4.0,
-            7.0 * pi / 8.0,
-            -7.0 * pi / 8.0,
-            pi
-        };
-
-        const double to_goal_x = goal_x - robot_x_;
-        const double to_goal_y = goal_y - robot_y_;
-        const double to_goal_norm = std::max(1e-6, std::hypot(to_goal_x, to_goal_y));
-        const double dir_x = to_goal_x / to_goal_norm;
-        const double dir_y = to_goal_y / to_goal_norm;
-
-        int exit_rays = 0;
-        non_return_rays = 0;
-        best_ray = 0.0;
-        exit_score = 0.0;
-
-        for (const double yaw : angles) {
-            const double ray = rayClearDistanceFrom(
-                map,
-                goal_x,
-                goal_y,
-                yaw,
-                FRONTIER_EXIT_RAY_MAX_DISTANCE,
-                FRONTIER_EXIT_RAY_CLEARANCE
-            );
-
-            best_ray = std::max(best_ray, ray);
-
-            if (ray < FRONTIER_EXIT_RAY_MIN_DISTANCE) {
-                continue;
-            }
-
-            ++exit_rays;
-
-            const double dot =
-                std::cos(yaw) * dir_x +
-                std::sin(yaw) * dir_y;
-
-            if (dot > -0.20) {
-                ++non_return_rays;
-                exit_score += ray * (1.0 + 0.35 * std::max(0.0, dot));
-            } else {
-                exit_score += 0.25 * ray;
-            }
-        }
-
-        exit_score += 0.18 * static_cast<double>(exit_rays);
-        exit_score += 0.35 * static_cast<double>(non_return_rays);
-        return exit_rays;
     }
 
     double rayClearDistance(
@@ -2310,6 +1615,7 @@ private:
         geometry_msgs::msg::PoseStamped& goal)
     {
         const double pi = 3.14159265358979323846;
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
 
         bool found = false;
         double best_score = std::numeric_limits<double>::max();
@@ -2397,6 +1703,11 @@ private:
 
                     const double projection = forwardProjection(wx, wy);
 
+                    if (projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection ||
+                        projection < START_LINE_MARGIN) {
+                        continue;
+                    }
+
                     int mx = 0;
                     int my = 0;
 
@@ -2480,6 +1791,7 @@ private:
         geometry_msgs::msg::PoseStamped& goal)
     {
         const double pi = 3.14159265358979323846;
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
 
         bool found = false;
         double best_score = std::numeric_limits<double>::max();
@@ -2538,6 +1850,11 @@ private:
                 }
 
                 const double projection = forwardProjection(wx, wy);
+
+                if (projection + KEEP_MOVING_BACKTRACK_ALLOWANCE < current_projection ||
+                    projection < START_LINE_MARGIN) {
+                    continue;
+                }
 
                 int mx = 0;
                 int my = 0;
@@ -2605,204 +1922,6 @@ private:
             best_score,
             best_ray,
             best_clearance
-        );
-
-        return true;
-    }
-
-    bool makeDepthProgressGoal(
-        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        geometry_msgs::msg::PoseStamped& goal,
-        bool relaxed)
-    {
-        if (!hasLeftEntrance()) {
-            return false;
-        }
-
-        std::vector<int> reachable_distances;
-        std::vector<double> reachable_bottleneck_clearances;
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
-
-        if (!computeReachableMetrics(
-                map,
-                reachable_distances,
-                reachable_bottleneck_clearances)) {
-            return false;
-        }
-
-        if (!computeReachableMetricsFrom(
-                map,
-                start_x_,
-                start_y_,
-                false,
-                start_distances,
-                start_bottleneck_clearances)) {
-            return false;
-        }
-
-        const int width = static_cast<int>(map->info.width);
-        const int height = static_cast<int>(map->info.height);
-        const double resolution = map->info.resolution;
-        const double max_path_distance = relaxed ?
-            DEPTH_PROGRESS_RELAXED_MAX_PATH_DISTANCE :
-            DEPTH_PROGRESS_MAX_PATH_DISTANCE;
-        const double min_gain = relaxed ?
-            DEPTH_PROGRESS_RELAXED_MIN_GAIN :
-            DEPTH_PROGRESS_MIN_GAIN;
-        const double min_clearance = relaxed ?
-            DEPTH_PROGRESS_RELAXED_CLEARANCE :
-            DEPTH_PROGRESS_MIN_CLEARANCE;
-        const double min_bottleneck = relaxed ?
-            DEPTH_PROGRESS_RELAXED_BOTTLENECK :
-            DEPTH_PROGRESS_MIN_BOTTLENECK;
-
-        bool found = false;
-        double best_score = -std::numeric_limits<double>::max();
-        int best_mx = 0;
-        int best_my = 0;
-        double best_path_distance = 0.0;
-        double best_start_path_distance = 0.0;
-        double best_clearance = 0.0;
-        double best_bottleneck = 0.0;
-        double best_open_ratio = 0.0;
-        double best_depth_gain = 0.0;
-
-        for (int my = 1; my < height - 1; ++my) {
-            for (int mx = 1; mx < width - 1; ++mx) {
-                const int index = my * width + mx;
-
-                if (map->data[index] != 0 ||
-                    reachable_distances[index] < 0 ||
-                    start_distances[index] < 0) {
-                    continue;
-                }
-
-                const double path_distance = reachable_distances[index] * resolution;
-
-                if (path_distance < DEPTH_PROGRESS_MIN_PATH_DISTANCE ||
-                    path_distance > max_path_distance) {
-                    continue;
-                }
-
-                const double wx = mapToWorldX(map, mx);
-                const double wy = mapToWorldY(map, my);
-                const double euclidean_distance =
-                    std::hypot(wx - robot_x_, wy - robot_y_);
-
-                if (euclidean_distance < DEPTH_PROGRESS_MIN_EUCLIDEAN_DISTANCE) {
-                    continue;
-                }
-
-                const double start_path_distance = start_distances[index] * resolution;
-                const double depth_gain =
-                    start_path_distance - current_start_path_distance_;
-
-                if (depth_gain < min_gain) {
-                    continue;
-                }
-
-                if (isEntranceReturnForbiddenCandidate(
-                        wx,
-                        wy,
-                        start_path_distance)) {
-                    continue;
-                }
-
-                bool is_blacklisted = false;
-                for (const auto& bp : blacklist_) {
-                    if (std::hypot(wx - bp.x, wy - bp.y) < BLACKLIST_RADIUS) {
-                        is_blacklisted = true;
-                        break;
-                    }
-                }
-
-                if (is_blacklisted && !relaxed) {
-                    continue;
-                }
-
-                const double bottleneck = reachable_bottleneck_clearances[index];
-
-                if (bottleneck < min_bottleneck) {
-                    continue;
-                }
-
-                const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
-
-                if (clearance < min_clearance) {
-                    continue;
-                }
-
-                const double yaw = std::atan2(wy - robot_y_, wx - robot_x_);
-                const double angle_diff = std::abs(std::atan2(
-                    std::sin(yaw - robot_yaw_),
-                    std::cos(yaw - robot_yaw_)
-                ));
-                const double forward_alignment = std::cos(angle_diff);
-                const double open_ratio = openSpaceRatio(map, mx, my, OPEN_SPACE_RADIUS);
-                const double target_error = std::abs(path_distance - 0.85);
-                const double max_depth_gain =
-                    start_path_distance - max_start_path_distance_;
-
-                double score = 0.0;
-                score += 5.00 * depth_gain;
-                score += 2.00 * std::max(0.0, max_depth_gain);
-                score += 1.50 * start_path_distance;
-                score += 1.40 * bottleneck;
-                score += 1.20 * clearance;
-                score += 0.90 * open_ratio;
-                score += 0.70 * forward_alignment;
-                score -= 0.55 * target_error;
-                score -= 0.30 * angle_diff;
-
-                if (is_blacklisted) {
-                    score -= 1.50;
-                }
-
-                if (!found || score > best_score) {
-                    found = true;
-                    best_score = score;
-                    best_mx = mx;
-                    best_my = my;
-                    best_path_distance = path_distance;
-                    best_start_path_distance = start_path_distance;
-                    best_clearance = clearance;
-                    best_bottleneck = bottleneck;
-                    best_open_ratio = open_ratio;
-                    best_depth_gain = depth_gain;
-                }
-            }
-        }
-
-        if (!found) {
-            return false;
-        }
-
-        goal.header.frame_id = "map";
-        goal.header.stamp = this->now();
-        goal.pose.position.x = mapToWorldX(map, best_mx);
-        goal.pose.position.y = mapToWorldY(map, best_my);
-        goal.pose.orientation.x = 0.0;
-        goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
-        goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
-
-        current_goal_x_ = goal.pose.position.x;
-        current_goal_y_ = goal.pose.position.y;
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "depth-progress goal: x=%.2f, y=%.2f, score=%.2f, path=%.2f, start_path=%.2f, gain=%.2f, clearance=%.2f, bottleneck=%.2f, open=%.2f, relaxed=%d",
-            current_goal_x_,
-            current_goal_y_,
-            best_score,
-            best_path_distance,
-            best_start_path_distance,
-            best_depth_gain,
-            best_clearance,
-            best_bottleneck,
-            best_open_ratio,
-            relaxed ? 1 : 0
         );
 
         return true;
@@ -2889,12 +2008,31 @@ private:
 
                     const double projection = forwardProjection(wx, wy);
 
+                    if (projection < START_LINE_MARGIN) {
+                        continue;
+                    }
+
+                    const double backtrack_allowance =
+                        relaxed ? 0.35 : KEEP_MOVING_BACKTRACK_ALLOWANCE;
+
+                    if (projection + backtrack_allowance < current_projection) {
+                        continue;
+                    }
+
                     const double start_path_distance = start_distances[index] * resolution;
 
                     if (isEntranceReturnForbiddenCandidate(
                             wx,
                             wy,
                             start_path_distance)) {
+                        continue;
+                    }
+
+                    const double path_backtrack_allowance =
+                        relaxed ? 0.35 : START_PATH_BACKTRACK_ALLOWANCE;
+
+                    if (start_path_distance + path_backtrack_allowance <
+                        max_start_path_distance_) {
                         continue;
                     }
 
@@ -3168,20 +2306,27 @@ private:
                     continue;
                 }
 
-                if (isInEntranceReturnZone(wx, wy)) {
+                if (isInEntranceReturnZone(wx, wy) ||
+                    distanceFromStart(wx, wy) < ENTRANCE_NO_RETURN_WORLD_RADIUS) {
                     continue;
                 }
 
                 const double start_path_distance = start_distances[index] * resolution;
 
-                if (!isControlledDetourCandidate(
-                        wx,
-                        wy,
-                        start_path_distance)) {
+                if (start_path_distance < ENTRANCE_NO_RETURN_PATH_DISTANCE) {
+                    continue;
+                }
+
+                if (start_path_distance + BRANCH_ESCAPE_MAX_START_PATH_LOSS <
+                    max_start_path_distance_) {
                     continue;
                 }
 
                 const double projection = forwardProjection(wx, wy);
+
+                if (projection < START_LINE_MARGIN) {
+                    continue;
+                }
 
                 const double bottleneck = reachable_bottleneck_clearances[index];
 
@@ -3274,6 +2419,7 @@ private:
         }
 
         const double pi = 3.14159265358979323846;
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
 
         bool found = false;
         double best_score = -std::numeric_limits<double>::max();
@@ -3326,6 +2472,11 @@ private:
                 }
 
                 const double projection = forwardProjection(wx, wy);
+
+                // 완전한 입구 복귀 방향은 제외하되, 막힌 상황에서는 약간의 우회는 허용한다.
+                if (projection + 0.18 < current_projection) {
+                    continue;
+                }
 
                 const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
 
@@ -3419,10 +2570,6 @@ private:
         double best_path_bottleneck_clearance = 0.0;
         double best_start_path_distance = 0.0;
         double best_current_path_distance = 0.0;
-        double best_exit_score = 0.0;
-        double best_exit_ray = 0.0;
-        int best_exit_rays = 0;
-        int best_non_return_rays = 0;
         int best_cluster_size = 0;
 
         const int dx[4] = {0, 0, -1, 1};
@@ -3434,11 +2581,8 @@ private:
         std::vector<int> start_distances;
         std::vector<double> start_bottleneck_clearances;
 
-        if (!computeReachableMetricsFrom(
+        if (!computeReachableMetrics(
                 map,
-                robot_x_,
-                robot_y_,
-                !allow_backtrack,
                 reachable_distances,
                 reachable_bottleneck_clearances)) {
             return false;
@@ -3473,6 +2617,10 @@ private:
 
         // strict 모드에서는 현재까지 가장 깊게 들어간 거리보다 너무 뒤쪽 frontier는 제외한다.
         // relaxed 모드에서는 dead-end 탈출을 위해 이 제한을 크게 완화한다.
+        const double backtrack_allowance = allow_backtrack ?
+            RELAXED_BACKTRACK_ALLOWANCE :
+            START_PATH_BACKTRACK_ALLOWANCE;
+
         const double min_bottleneck = allow_backtrack ?
             std::max(0.075, PATH_BOTTLENECK_CLEARANCE - 0.030) :
             PATH_BOTTLENECK_CLEARANCE;
@@ -3588,20 +2736,11 @@ private:
                     const double final_goal_distance =
                         std::hypot(goal_wx - robot_x_, goal_wy - robot_y_);
 
-                    if (allow_backtrack) {
-                        if (!isControlledDetourCandidate(
-                                goal_wx,
-                                goal_wy,
-                                start_path_distance)) {
-                            continue;
-                        }
-                    } else {
-                        if (isEntranceReturnForbiddenCandidate(
-                                goal_wx,
-                                goal_wy,
-                                start_path_distance)) {
-                            continue;
-                        }
+                    if (isEntranceReturnForbiddenCandidate(
+                            goal_wx,
+                            goal_wy,
+                            start_path_distance)) {
+                        continue;
                     }
 
                     if (final_goal_distance < MIN_FINAL_GOAL_DISTANCE) {
@@ -3609,6 +2748,11 @@ private:
                     }
 
                     if (start_path_distance < MIN_START_PATH_GOAL_DISTANCE) {
+                        continue;
+                    }
+
+                    // strict: 계속 더 깊은 쪽을 우선. relaxed: dead-end 탈출을 위해 뒤쪽 frontier도 허용.
+                    if (start_path_distance + backtrack_allowance < max_start_path_distance_) {
                         continue;
                     }
 
@@ -3630,7 +2774,7 @@ private:
                         }
                     }
 
-                    if (is_blacklisted) {
+                    if (is_blacklisted && !allow_backtrack) {
                         continue;
                     }
 
@@ -3645,24 +2789,6 @@ private:
                     const double depth_gain = start_path_distance - current_start_path;
                     const double max_depth_gain = start_path_distance - max_start_path_distance_;
                     const double backtrack_amount = std::max(0.0, current_start_path - start_path_distance);
-                    double exit_score = 0.0;
-                    double candidate_exit_ray = 0.0;
-                    int non_return_rays = 0;
-                    const int exit_rays = goalExitRayCount(
-                        map,
-                        goal_wx,
-                        goal_wy,
-                        exit_score,
-                        candidate_exit_ray,
-                        non_return_rays
-                    );
-                    const int min_exit_rays = allow_backtrack ?
-                        FRONTIER_MIN_EXIT_RAYS_RELAXED :
-                        FRONTIER_MIN_EXIT_RAYS_STRICT;
-
-                    if (exit_rays < min_exit_rays || non_return_rays <= 0) {
-                        continue;
-                    }
 
                     // 점수는 "가까운 열린 공간"이 아니라 "시작점에서 graph상 더 깊은 frontier"를 고르게 만든다.
                     // 그래서 특정 맵의 출구 방향을 하드코딩하지 않아도, 미로를 계속 진행하는 방향을 선택한다.
@@ -3674,13 +2800,15 @@ private:
                     score += 1.20 * clearance;
                     score += 0.55 * cluster_length;
                     score += 0.80 * open_ratio;
-                    score += FRONTIER_EXIT_SCORE_WEIGHT * exit_score;
                     score -= 0.45 * current_path_distance;
                     score -= 0.35 * angle_diff;
                     score -= (allow_backtrack ? 2.00 : 6.00) * backtrack_amount;
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
-                    score -= 2.50 * std::max(0, min_exit_rays + 1 - exit_rays);
+
+                    if (is_blacklisted) {
+                        score -= 1.0;
+                    }
 
                     // 완전히 입구 쪽으로 되돌아가는 후보는 relaxed에서도 낮은 점수를 준다.
                     if (hasLeftEntrance() && distanceFromStart(goal_wx, goal_wy) < START_RETURN_GOAL_RADIUS) {
@@ -3695,10 +2823,6 @@ private:
                         best_path_bottleneck_clearance = path_bottleneck_clearance;
                         best_start_path_distance = start_path_distance;
                         best_current_path_distance = current_path_distance;
-                        best_exit_score = exit_score;
-                        best_exit_ray = candidate_exit_ray;
-                        best_exit_rays = exit_rays;
-                        best_non_return_rays = non_return_rays;
                         best_cluster_size = static_cast<int>(cluster.size());
                     }
                 }
@@ -3723,17 +2847,13 @@ private:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "v12 frontier goal: x=%.2f, y=%.2f, score=%.2f, start_path=%.2f, current_path=%.2f, bottleneck=%.2f, exit_score=%.2f, exit_ray=%.2f, exit_rays=%d, non_return=%d, cluster=%d, relaxed=%d",
+            "v12 frontier goal: x=%.2f, y=%.2f, score=%.2f, start_path=%.2f, current_path=%.2f, bottleneck=%.2f, cluster=%d, relaxed=%d",
             current_goal_x_,
             current_goal_y_,
             best_score,
             best_start_path_distance,
             best_current_path_distance,
             best_path_bottleneck_clearance,
-            best_exit_score,
-            best_exit_ray,
-            best_exit_rays,
-            best_non_return_rays,
             best_cluster_size,
             allow_backtrack ? 1 : 0
         );
@@ -3741,61 +2861,11 @@ private:
         return true;
     }
 
-    void continueAfterNavFailure(
-        const std::string& reason,
-        bool try_goal_first,
-        bool allow_backup_recovery)
-    {
-        if (!try_goal_first) {
-            force_escape_after_cancel_ = false;
-        }
-
-        if (isLocallyBoxedIn()) {
-            startScanDriveEscape(reason + " boxed-in");
-            if (escape_active_) {
-                return;
-            }
-        }
-
-        if (try_goal_first && trySendNextGoal()) {
-            return;
-        }
-
-        if (goal_in_progress_ || canceling_goal_ || escape_active_) {
-            return;
-        }
-
-        if (consecutive_goal_failures_ >= 2) {
-            startScanDriveEscape(reason);
-            if (escape_active_) {
-                return;
-            }
-        }
-
-        if (allow_backup_recovery) {
-            startEscapeRecovery("repeated Nav2 goal failure");
-            if (escape_active_) {
-                return;
-            }
-        }
-
-        startForwardCreep(reason);
-        if (goal_in_progress_ || escape_active_) {
-            return;
-        }
-
-        if (!try_goal_first) {
-            trySendNextGoal();
-        }
-    }
-
-    bool sendGoal(
-        const geometry_msgs::msg::PoseStamped& goal_pose,
-        bool allow_controlled_detour = false)
+    void sendGoal(const geometry_msgs::msg::PoseStamped& goal_pose)
     {
         if (!nav_client_->wait_for_action_server(std::chrono::seconds(1))) {
             RCLCPP_WARN(this->get_logger(), "Nav2 action server 대기 중입니다. 다음 idle tick에서 재시도합니다.");
-            return false;
+            return;
         }
 
         goal_pub_->publish(goal_pose);
@@ -3817,12 +2887,8 @@ private:
                     blacklist_.clear();
                     consecutive_goal_failures_++;
                     goal_in_progress_ = false;
-                    active_goal_allows_detour_ = false;
                     active_goal_handle_.reset();
-                    continueAfterNavFailure(
-                        "Nav2 goal rejected",
-                        true,
-                        canUseBackupRecovery());
+                    trySendNextGoal();
                     return;
                 }
 
@@ -3834,10 +2900,6 @@ private:
 
         goal_in_progress_ = true;
         canceling_goal_ = false;
-        active_goal_allows_detour_ = allow_controlled_detour;
-        local_turn_commit_active_ = false;
-        scan_drive_escape_active_ = false;
-        local_turn_direction_ = 0.0;
         goal_start_x_ = robot_x_;
         goal_start_y_ = robot_y_;
         goal_start_projection_ = forwardProjection(robot_x_, robot_y_);
@@ -3849,7 +2911,6 @@ private:
         last_progress_time_ = this->now();
 
         nav_client_->async_send_goal(goal_msg, send_goal_options);
-        return true;
     }
 
     void idleRetryCallback()
@@ -3862,22 +2923,7 @@ private:
             return;
         }
 
-        if (force_escape_after_cancel_ && consecutive_goal_failures_ > 0) {
-            continueAfterNavFailure(
-                "idle retry forced local escape",
-                false,
-                canUseBackupRecovery());
-            if (goal_in_progress_ || escape_active_) {
-                return;
-            }
-        }
-
-        if (!trySendNextGoal() && consecutive_goal_failures_ > 0) {
-            continueAfterNavFailure(
-                "idle retry after Nav2 failure",
-                false,
-                canUseBackupRecovery());
-        }
+        trySendNextGoal();
     }
 
     void watchdogCallback()
@@ -3898,17 +2944,19 @@ private:
         const double start_distance = distanceFromStart(robot_x_, robot_y_);
         const double projection = forwardProjection(robot_x_, robot_y_);
 
-        if (isBacktrackingTowardEntrance()) {
+        if (hasLeftEntrance() &&
+            (start_distance < START_RETURN_CANCEL_RADIUS ||
+             projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+             max_forward_projection_ ||
+             start_distance + NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+             max_start_distance_)) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "입구 출구 영역 진입 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f, detour=%d",
+                "입구 복귀 방향 이동 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f, 현재투영=%.2f, 최대투영=%.2f",
                 start_distance,
                 max_start_distance_,
                 projection,
-                max_forward_projection_,
-                current_start_path_distance_,
-                max_start_path_distance_,
-                active_goal_allows_detour_ ? 1 : 0
+                max_forward_projection_
             );
 
             cancelCurrentGoalAndBlacklist();
@@ -3925,23 +2973,6 @@ private:
         }
 
         if ((this->now() - last_progress_time_).seconds() < STUCK_TIMEOUT) {
-            if (isLocallyBoxedIn() &&
-                (this->now() - last_progress_time_).seconds() >=
-                POCKET_ESCAPE_STUCK_TIMEOUT) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "막힌 포켓 감지. Nav2 goal을 기다리지 않고 탈출로 전환합니다: x=%.2f, y=%.2f, no_progress=%.2fs",
-                    current_goal_x_,
-                    current_goal_y_,
-                    (this->now() - last_progress_time_).seconds()
-                );
-
-                consecutive_goal_failures_ = std::max(consecutive_goal_failures_, 2);
-                force_escape_after_cancel_ = true;
-                cancelCurrentGoalAndBlacklist();
-                return;
-            }
-
             return;
         }
 
@@ -3953,8 +2984,6 @@ private:
             goal_distance
         );
 
-        force_escape_after_cancel_ = true;
-        consecutive_goal_failures_ = std::max(consecutive_goal_failures_, 1);
         cancelCurrentGoalAndBlacklist();
     }
 
@@ -3978,22 +3007,7 @@ private:
         std::string continue_reason = "after Nav2 result";
 
         if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
-            if (isLocallyBoxedIn()) {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "목표 성공 처리됐지만 현재 위치가 막힌 포켓입니다. 새 goal보다 탈출을 우선합니다: moved=%.2f, projection_gain=%.2f, path_gain=%.2f",
-                    moved_distance,
-                    projection_gain,
-                    path_gain
-                );
-
-                consecutive_goal_failures_ = std::max(consecutive_goal_failures_, 2);
-                addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-                should_escape_after_result = canUseBackupRecovery();
-                prefer_local_motion_after_result = true;
-                force_escape_after_cancel_ = true;
-                continue_reason = "goal succeeded inside local pocket";
-            } else if (moved_distance < 0.08 &&
+            if (moved_distance < 0.08 &&
                 projection_gain < 0.06 &&
                 path_gain < 0.06) {
                 RCLCPP_WARN(
@@ -4028,10 +3042,6 @@ private:
             should_escape_after_result = canUseBackupRecovery();
             prefer_local_motion_after_result = true;
             continue_reason = "stuck goal canceled";
-            if (force_escape_after_cancel_) {
-                consecutive_goal_failures_ = std::max(consecutive_goal_failures_, 2);
-                continue_reason = "forced local escape after canceled stuck goal";
-            }
         } else {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -4051,37 +3061,29 @@ private:
         active_goal_handle_.reset();
         canceling_goal_ = false;
         goal_in_progress_ = false;
-        active_goal_allows_detour_ = false;
 
-        if (prefer_local_motion_after_result) {
-            const bool try_goal_first = !force_escape_after_cancel_;
-            force_escape_after_cancel_ = false;
+        if (should_escape_after_result) {
+            startEscapeRecovery("repeated Nav2 goal failure");
+            if (escape_active_) {
+                return;
+            }
 
-            RCLCPP_WARN(
-                this->get_logger(),
-                "Nav2 결과 후 복구 진행: reason=%s, failures=%d, try_goal_first=%d",
-                continue_reason.c_str(),
-                consecutive_goal_failures_,
-                try_goal_first ? 1 : 0
-            );
-
-            continueAfterNavFailure(
-                continue_reason,
-                try_goal_first,
-                should_escape_after_result);
-            return;
+            prefer_local_motion_after_result = true;
+            continue_reason = "backup recovery skipped";
         }
 
-        force_escape_after_cancel_ = false;
+        if (prefer_local_motion_after_result) {
+            startForwardCreep(continue_reason);
+            if (escape_active_) {
+                return;
+            }
+        }
 
         if (!trySendNextGoal() &&
             !escape_active_ &&
             !goal_in_progress_ &&
             !canceling_goal_) {
-            continueAfterNavFailure(
-                continue_reason,
-                false,
-                should_escape_after_result);
+            startForwardCreep(continue_reason);
             return;
         }
     }

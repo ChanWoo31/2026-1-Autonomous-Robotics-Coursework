@@ -32,20 +32,6 @@ public:
     side_slow_ = this->declare_parameter<double>("side_slow", 0.110);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
     wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 24.0);
-    corner_angle_deg_ = this->declare_parameter<double>("corner_angle_deg", 38.0);
-    corner_half_width_deg_ = this->declare_parameter<double>("corner_half_width_deg", 10.0);
-    side_angle_deg_ = this->declare_parameter<double>("side_angle_deg", 82.0);
-    side_half_width_deg_ = this->declare_parameter<double>("side_half_width_deg", 12.0);
-    side_turn_stop_ = this->declare_parameter<double>("side_turn_stop", 0.085);
-    side_turn_slow_ = this->declare_parameter<double>("side_turn_slow", 0.140);
-    corner_stop_ = this->declare_parameter<double>("corner_stop", 0.095);
-    corner_slow_ = this->declare_parameter<double>("corner_slow", 0.170);
-    side_linear_stop_ = this->declare_parameter<double>("side_linear_stop", 0.060);
-    side_linear_slow_ = this->declare_parameter<double>("side_linear_slow", 0.105);
-    side_imbalance_allowance_ = this->declare_parameter<double>("side_imbalance_allowance", 0.025);
-    wall_nudge_angular_ = this->declare_parameter<double>("wall_nudge_angular", 0.18);
-    pure_turn_linear_epsilon_ = this->declare_parameter<double>("pure_turn_linear_epsilon", 0.010);
-    preserve_turn_angular_ = this->declare_parameter<double>("preserve_turn_angular", 0.080);
     min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.035);
 
     command_timeout_ = this->declare_parameter<double>("command_timeout", 0.35);
@@ -96,20 +82,6 @@ private:
   double side_slow_;
   double front_half_width_deg_;
   double wide_half_width_deg_;
-  double corner_angle_deg_;
-  double corner_half_width_deg_;
-  double side_angle_deg_;
-  double side_half_width_deg_;
-  double side_turn_stop_;
-  double side_turn_slow_;
-  double corner_stop_;
-  double corner_slow_;
-  double side_linear_stop_;
-  double side_linear_slow_;
-  double side_imbalance_allowance_;
-  double wall_nudge_angular_;
-  double pure_turn_linear_epsilon_;
-  double preserve_turn_angular_;
   double min_creep_linear_;
   double command_timeout_;
   double scan_timeout_;
@@ -191,83 +163,6 @@ private:
     return best;
   }
 
-  double slowdownScale(double distance, double stop_distance, double slow_distance) const
-  {
-    if (distance <= stop_distance) {
-      return 0.0;
-    }
-
-    if (distance >= slow_distance) {
-      return 1.0;
-    }
-
-    const double window = std::max(0.01, slow_distance - stop_distance);
-    return clamp((distance - stop_distance) / window, 0.22, 1.0);
-  }
-
-  void limitTurnTowardWall(
-    geometry_msgs::msg::Twist& cmd,
-    double left_distance,
-    double right_distance,
-    double stop_distance,
-    double slow_distance) const
-  {
-    if (left_distance < stop_distance && cmd.angular.z > 0.0) {
-      cmd.angular.z = 0.0;
-    } else if (left_distance < slow_distance && cmd.angular.z > 0.0) {
-      cmd.angular.z *= slowdownScale(left_distance, stop_distance, slow_distance);
-    }
-
-    if (right_distance < stop_distance && cmd.angular.z < 0.0) {
-      cmd.angular.z = 0.0;
-    } else if (right_distance < slow_distance && cmd.angular.z < 0.0) {
-      cmd.angular.z *= slowdownScale(right_distance, stop_distance, slow_distance);
-    }
-  }
-
-  void keepCenteredInNarrowPassage(
-    geometry_msgs::msg::Twist& cmd,
-    double left_distance,
-    double right_distance) const
-  {
-    const double side_min = std::min(left_distance, right_distance);
-    const double side_max = std::max(left_distance, right_distance);
-    const double imbalance = side_max - side_min;
-
-    if (side_min >= side_linear_slow_ || imbalance < side_imbalance_allowance_) {
-      return;
-    }
-
-    if (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_ &&
-        std::abs(cmd.angular.z) >= preserve_turn_angular_) {
-      return;
-    }
-
-    const double away_from_close_wall =
-      (left_distance < right_distance) ? -1.0 : 1.0;
-
-    if (side_min < side_linear_stop_) {
-      if (cmd.linear.x > 0.0) {
-        cmd.linear.x = 0.0;
-      }
-      cmd.angular.z = away_from_close_wall *
-        std::max(std::abs(cmd.angular.z), wall_nudge_angular_);
-      return;
-    }
-
-    if (cmd.linear.x > 0.0) {
-      cmd.linear.x *= slowdownScale(
-        side_min,
-        side_linear_stop_,
-        side_linear_slow_);
-      cmd.linear.x = std::max(
-        cmd.linear.x,
-        std::min(min_creep_linear_, max_linear_));
-    }
-
-    cmd.angular.z += away_from_close_wall * wall_nudge_angular_;
-  }
-
   void publishZero()
   {
     geometry_msgs::msg::Twist zero;
@@ -320,46 +215,20 @@ private:
       front_angle_offset_,
       deg2rad(wide_half_width_deg_));
 
-    const double left_corner = sectorMinCentered(
-      scan,
-      front_angle_offset_ + deg2rad(corner_angle_deg_),
-      deg2rad(corner_half_width_deg_));
-
-    const double right_corner = sectorMinCentered(
-      scan,
-      front_angle_offset_ - deg2rad(corner_angle_deg_),
-      deg2rad(corner_half_width_deg_));
-
-    const double left_side = sectorMinCentered(
-      scan,
-      front_angle_offset_ + deg2rad(side_angle_deg_),
-      deg2rad(side_half_width_deg_));
-
-    const double right_side = sectorMinCentered(
-      scan,
-      front_angle_offset_ - deg2rad(side_angle_deg_),
-      deg2rad(side_half_width_deg_));
-
-    const double front_min = std::min(front_narrow, front_wide);
-    const double corner_min = std::min(left_corner, right_corner);
-    const double slow_min = std::min(front_min, corner_min);
+    const double slow_min = std::min(front_narrow, front_wide);
 
     if (cmd.linear.x > 0.0 && (front_narrow < front_stop_ || front_wide < side_stop_)) {
       cmd.linear.x = 0.0;
-    } else if (cmd.linear.x > 0.0 && corner_min < corner_stop_) {
-      cmd.linear.x = 0.0;
-    } else if (cmd.linear.x > 0.0 && slow_min < std::max(front_slow_, corner_slow_)) {
+    } else if (cmd.linear.x > 0.0 && slow_min < front_slow_) {
       const double active_slow_limit =
-        (corner_min < corner_slow_) ? corner_slow_ :
-        ((front_wide < side_slow_) ? side_slow_ : front_slow_);
-      const double active_stop_limit =
-        (corner_min < corner_slow_) ? corner_stop_ :
-        ((front_wide < side_slow_) ? side_stop_ : front_stop_);
-      const double scale = slowdownScale(slow_min, active_stop_limit, active_slow_limit);
+        (front_wide < side_slow_) ? side_slow_ : front_slow_;
+      const double slow_window = std::max(0.01, active_slow_limit - front_stop_);
+      const double scale = clamp(
+        (slow_min - front_stop_) / slow_window,
+        0.28,
+        1.0);
       cmd.linear.x *= scale;
-      if (front_narrow > front_stop_ &&
-          front_wide > side_stop_ &&
-          corner_min > corner_stop_) {
+      if (front_narrow > front_stop_ && front_wide > side_stop_) {
         cmd.linear.x = std::max(
           cmd.linear.x,
           std::min(min_creep_linear_, max_linear_));
@@ -370,22 +239,6 @@ private:
       cmd.angular.z = clamp(cmd.angular.z, -0.80, 0.80);
     }
 
-    limitTurnTowardWall(
-      cmd,
-      left_corner,
-      right_corner,
-      corner_stop_,
-      corner_slow_);
-
-    limitTurnTowardWall(
-      cmd,
-      left_side,
-      right_side,
-      side_turn_stop_,
-      side_turn_slow_);
-
-    keepCenteredInNarrowPassage(cmd, left_side, right_side);
-
     cmd.angular.z = clamp(cmd.angular.z, -max_angular_, max_angular_);
     safe_pub_->publish(cmd);
 
@@ -393,13 +246,9 @@ private:
       this->get_logger(),
       *this->get_clock(),
       1000,
-      "v11 filter: front=(%.3f, %.3f), corner=(%.3f, %.3f), side=(%.3f, %.3f), in=(%.3f, %.3f), out=(%.3f, %.3f)",
+      "v10 filter: narrow=%.3f, wide=%.3f, in=(%.3f, %.3f), out=(%.3f, %.3f)",
       front_narrow,
       front_wide,
-      left_corner,
-      right_corner,
-      left_side,
-      right_side,
       last_cmd_.linear.x,
       last_cmd_.angular.z,
       cmd.linear.x,
