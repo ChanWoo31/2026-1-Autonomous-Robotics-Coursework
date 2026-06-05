@@ -38,7 +38,8 @@ public:
             std::bind(&MazeExplorer::scanCallback, this, _1)
         );
 
-        goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/goal_pose", 10);
+        // /goal_pose is also consumed by Nav2, so use a private topic only for visualization.
+        goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/maze_explorer/goal_pose", 10);
         // Nav2의 cmd_vel을 safety filter로 보내기 위한 입력 토픽.
         // 실제 로봇으로 나가는 /cmd_vel은 safety filter가 publish해야 한다.
         escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
@@ -177,6 +178,10 @@ private:
     const double CONTACT_REVERSE_SPEED = 0.035;
     const double CONTACT_REVERSE_DURATION = 0.45;
     const double CONTACT_REVERSE_REAR_CLEARANCE = 0.14;
+    const double CONTACT_WIDE_RAY_SPEED = 0.040;
+    const double CONTACT_WIDE_RAY_DURATION = 0.65;
+    const double CONTACT_WIDE_RAY_MIN_DISTANCE = 0.18;
+    const double CONTACT_WIDE_RAY_MAX_DISTANCE = 0.75;
     const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
@@ -1268,6 +1273,148 @@ private:
         );
     }
 
+    bool startWideRayRecovery(const std::string& reason)
+    {
+        if (escape_active_ || goal_in_progress_ || canceling_goal_) {
+            return false;
+        }
+
+        if (!latest_map_ || !updateRobotPose()) {
+            return false;
+        }
+
+        const bool scan_ready =
+            latest_scan_ &&
+            !latest_scan_->ranges.empty() &&
+            latest_scan_->angle_increment > 0.0 &&
+            (this->now() - last_scan_time_).seconds() <= 0.60;
+
+        if (!scan_ready) {
+            return false;
+        }
+
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
+        const double pi = 3.14159265358979323846;
+        const std::vector<double> angle_offsets = {
+            0.0,
+            pi / 12.0,
+            -pi / 12.0,
+            pi / 6.0,
+            -pi / 6.0,
+            pi / 4.0,
+            -pi / 4.0,
+            pi / 3.0,
+            -pi / 3.0,
+            pi / 2.0,
+            -pi / 2.0,
+            pi * 2.0 / 3.0,
+            -pi * 2.0 / 3.0,
+            pi * 3.0 / 4.0,
+            -pi * 3.0 / 4.0
+        };
+
+        bool found_direction = false;
+        double best_score = -std::numeric_limits<double>::max();
+        double best_yaw = robot_yaw_;
+        double best_ray = 0.0;
+        double best_scan_clearance = 0.0;
+        double best_projected_next = current_projection;
+
+        for (const double offset : angle_offsets) {
+            const double yaw = robot_yaw_ + offset;
+            const double scan_clearance = scanSectorMin(
+                offset,
+                LOCAL_ESCAPE_SCAN_HALF_WIDTH
+            );
+            const double ray_distance = rayClearDistance(
+                latest_map_,
+                yaw,
+                CONTACT_WIDE_RAY_MAX_DISTANCE,
+                LOCAL_ESCAPE_RAY_CLEARANCE
+            );
+
+            if (scan_clearance < CONTACT_OSCILLATION_DISTANCE &&
+                ray_distance < CONTACT_WIDE_RAY_MIN_DISTANCE) {
+                continue;
+            }
+
+            const double step_distance = std::min(
+                LOCAL_ESCAPE_STEP_DISTANCE,
+                std::max(0.0, ray_distance - 0.04)
+            );
+
+            if (step_distance <= 0.05) {
+                continue;
+            }
+
+            const double wx = robot_x_ + step_distance * std::cos(yaw);
+            const double wy = robot_y_ + step_distance * std::sin(yaw);
+            const double projected_next = forwardProjection(wx, wy);
+
+            if (hasLeftEntrance() &&
+                (isInEntranceReturnZone(wx, wy) || projected_next < START_LINE_MARGIN)) {
+                continue;
+            }
+
+            const double projection_loss =
+                std::max(0.0, current_projection - projected_next);
+            double score = 0.0;
+            score += 2.20 * ray_distance;
+            score += 1.40 * std::min(scan_clearance, CONTACT_WIDE_RAY_MAX_DISTANCE);
+            score -= 0.45 * std::abs(offset);
+            score -= 0.90 * projection_loss;
+
+            if (!found_direction || score > best_score) {
+                found_direction = true;
+                best_score = score;
+                best_yaw = yaw;
+                best_ray = ray_distance;
+                best_scan_clearance = scan_clearance;
+                best_projected_next = projected_next;
+            }
+        }
+
+        if (!found_direction) {
+            return false;
+        }
+
+        const double yaw_error = std::atan2(
+            std::sin(best_yaw - robot_yaw_),
+            std::cos(best_yaw - robot_yaw_)
+        );
+
+        recovery_linear_speed_ = CONTACT_WIDE_RAY_SPEED;
+        if (std::abs(yaw_error) > LOCAL_ESCAPE_ALIGN_YAW) {
+            recovery_linear_speed_ = CONTACT_WIDE_RAY_SPEED * 0.35;
+        }
+
+        recovery_angular_speed_ = std::clamp(
+            1.20 * yaw_error,
+            -LOCAL_ESCAPE_MAX_TURN_SPEED,
+            LOCAL_ESCAPE_MAX_TURN_SPEED
+        );
+
+        geometry_msgs::msg::Twist stop;
+        escape_cmd_pub_->publish(stop);
+
+        escape_active_ = true;
+        escape_until_ = this->now() + rclcpp::Duration::from_seconds(CONTACT_WIDE_RAY_DURATION);
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "접촉 복구: 가장 넓은 ray 방향으로 짧게 이동합니다. linear=%.3f, angular=%.3f, map_ray=%.2f, scan=%.2f, proj=%.2f -> %.2f, reason=%s",
+            recovery_linear_speed_,
+            recovery_angular_speed_,
+            best_ray,
+            best_scan_clearance,
+            current_projection,
+            best_projected_next,
+            reason.c_str()
+        );
+
+        return true;
+    }
+
     void startContactReverseRecovery(const std::string& reason)
     {
         if (escape_active_ || goal_in_progress_ || canceling_goal_) {
@@ -1293,6 +1440,7 @@ private:
                 contact_distance,
                 reason.c_str()
             );
+            startWideRayRecovery(reason + " rear blocked");
             return;
         }
 
@@ -1322,6 +1470,11 @@ private:
         }
 
         if (!updateRobotPose()) {
+            return;
+        }
+
+        if (nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE &&
+            startWideRayRecovery(reason + " contact")) {
             return;
         }
 
@@ -2942,6 +3095,9 @@ private:
             RCLCPP_WARN(this->get_logger(), "Nav2 action server 대기 중입니다. 다음 idle tick에서 재시도합니다.");
             return;
         }
+
+        current_goal_x_ = goal_pose.pose.position.x;
+        current_goal_y_ = goal_pose.pose.position.y;
 
         goal_pub_->publish(goal_pose);
 
