@@ -41,7 +41,7 @@ controller_server:
       
     FollowPath:
       plugin: "teb_local_planner::TebLocalPlannerROS"
-      max_vel_x: 0.17           # 안전 필터와 함께 사용하는 전진 속도
+      max_vel_x: 0.12           # 안전 필터와 속도 차이를 줄여 코너 shortcut을 완화
       max_vel_x_backwards: 0.0  # 입구 방향 되감기 방지를 위해 후진 금지
       max_vel_theta: 1.0
       acc_lim_x: 1.0
@@ -63,7 +63,7 @@ controller_server:
       free_goal_vel: true
       
       # 장애물 회피 설정
-      min_obstacle_dist: 0.045    # 좁은 통로 통과성을 우선하고, 실제 접촉은 safety filter에서 감속
+      min_obstacle_dist: 0.060    # 좁은 통로는 유지하되 S자 안쪽 벽 긁힘을 줄임
       include_costmap_obstacles: True
       costmap_obstacles_behind_robot_dist: 0.5
       obstacle_poses_affected: 18 # 최적화 연산량 감소 및 빠른 반응 속도 확보
@@ -83,8 +83,8 @@ controller_server:
       weight_kinematics_forward_drive: 40.0   # 후진은 남기되 전진 주행을 더 선호
       weight_kinematics_turning_radius: 1.0
       weight_optimaltime: 6.0 
-      weight_obstacle: 82.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
-      weight_viapoint: 15.0                    # global path를 코너에서 과하게 자르지 않게 함
+      weight_obstacle: 95.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
+      weight_viapoint: 20.0                    # global path를 코너에서 과하게 자르지 않게 함
 
 local_costmap:
   local_costmap:
@@ -129,7 +129,7 @@ global_costmap:
       transform_tolerance: 1.5
       # Global planner만 약간 덜 보수적으로 둔다.
       # 실제 충돌 회피는 local_costmap + TEB radius 0.115가 담당한다.
-      robot_radius: 0.105
+      robot_radius: 0.115
       resolution: 0.02
       track_unknown_space: true
       plugins: ["static_layer", "inflation_layer"]
@@ -154,8 +154,8 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # 전역 경로가 좁은 통로를 막힌 곳으로 판단하지 않게 완화
-        inflation_radius: 0.10
-        cost_scaling_factor: 8.0
+        inflation_radius: 0.12
+        cost_scaling_factor: 6.0
       always_send_full_costmap: true
 
 planner_server:
@@ -241,16 +241,16 @@ cmd_vel_safety_filter:
     nav_cmd_topic: "/cmd_vel_nav"
     safe_cmd_topic: "/cmd_vel"
     scan_topic: "/scan"
-    max_linear: 0.12
+    max_linear: 0.10
     max_reverse: 0.06
     max_angular: 1.20
     # laser TF를 yaw 3.14159로 publish하는 현재 구성에서는 LaserScan raw frame의 정면이 pi 근처일 수 있다.
     # RViz에서 /scan 정면 sector가 반대로 보이면 실행 시 front_angle_offset:=0.0으로 비교한다.
     front_angle_offset: 3.14159
-    front_stop: 0.070
-    front_slow: 0.180
-    side_stop: 0.075
-    side_slow: 0.110
+    front_stop: 0.085
+    front_slow: 0.215
+    side_stop: 0.080
+    side_slow: 0.130
     front_half_width_deg: 14.0
     wide_half_width_deg: 24.0
     corner_angle_deg: 38.0
@@ -259,10 +259,10 @@ cmd_vel_safety_filter:
     side_half_width_deg: 12.0
     side_turn_stop: 0.075
     side_turn_slow: 0.125
-    corner_stop: 0.085
-    corner_slow: 0.145
-    side_linear_stop: 0.055
-    side_linear_slow: 0.095
+    corner_stop: 0.095
+    corner_slow: 0.165
+    side_linear_stop: 0.065
+    side_linear_slow: 0.115
     side_imbalance_allowance: 0.030
     wall_nudge_angular: 0.14
     min_creep_linear: 0.035

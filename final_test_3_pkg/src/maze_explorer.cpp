@@ -117,8 +117,8 @@ private:
     const double BLACKLIST_TTL_CANCEL = 4.0;
 
     const double GOAL_CLEARANCE = 0.110;
-    const double PATH_CLEARANCE = 0.085;
-    const double PATH_BOTTLENECK_CLEARANCE = 0.105;
+    const double PATH_CLEARANCE = 0.095;
+    const double PATH_BOTTLENECK_CLEARANCE = 0.110;
     const double GOAL_STANDOFF = 0.28;
     const double GOAL_SEARCH_RADIUS = 0.32;
     const double PREFERRED_GOAL_CLEARANCE = 0.18;
@@ -129,7 +129,7 @@ private:
 
     const double MIN_GOAL_DISTANCE = 0.35;
     const double MIN_FINAL_GOAL_DISTANCE = 0.35;
-    const double MIN_FINAL_GOAL_CLEARANCE = 0.105;
+    const double MIN_FINAL_GOAL_CLEARANCE = 0.112;
 
     const double START_LINE_MARGIN = 0.20;
     const double START_DIRECTION_WEIGHT = 1.1;
@@ -165,13 +165,18 @@ private:
     const double FORWARD_ALIGNMENT_WEIGHT = 1.20;
     const double OPEN_SPACE_WEIGHT = 1.80;
     const double OPEN_RAY_MAX_DISTANCE = 1.10;
-    const double OPEN_RAY_LINE_CLEARANCE = 0.075;
-    const double OPEN_RAY_GOAL_CLEARANCE = 0.105;
-    const double LOOKAHEAD_PIVOT_CLEARANCE = 0.075;
-    const double LOOKAHEAD_GOAL_CLEARANCE = 0.105;
+    const double OPEN_RAY_LINE_CLEARANCE = 0.085;
+    const double OPEN_RAY_GOAL_CLEARANCE = 0.112;
+    const double LOOKAHEAD_PIVOT_CLEARANCE = 0.085;
+    const double LOOKAHEAD_GOAL_CLEARANCE = 0.112;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
     const double STUCK_TIMEOUT = 5.0;
+    const double CONTACT_OSCILLATION_DISTANCE = 0.115;
+    const double CONTACT_OSCILLATION_TIMEOUT = 0.80;
+    const double CONTACT_REVERSE_SPEED = 0.035;
+    const double CONTACT_REVERSE_DURATION = 0.45;
+    const double CONTACT_REVERSE_REAR_CLEARANCE = 0.14;
     const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
@@ -196,8 +201,8 @@ private:
     const double BRANCH_ESCAPE_MIN_PATH_DISTANCE = 0.70;
     const double BRANCH_ESCAPE_MAX_PATH_DISTANCE = 2.40;
     const double BRANCH_ESCAPE_MAX_START_PATH_LOSS = 1.40;
-    const double BRANCH_ESCAPE_MIN_CLEARANCE = 0.090;
-    const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.080;
+    const double BRANCH_ESCAPE_MIN_CLEARANCE = 0.095;
+    const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.085;
 
     const double ESCAPE_MIN_DISTANCE = 0.22;
     const double ESCAPE_MAX_DISTANCE = 0.55;
@@ -213,6 +218,8 @@ private:
     double goal_start_projection_ = 0.0;
     double goal_start_path_distance_ = 0.0;
     int consecutive_goal_failures_ = 0;
+    bool contact_oscillation_active_ = false;
+    rclcpp::Time contact_oscillation_since_;
 
     void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
     {
@@ -361,6 +368,27 @@ private:
         }
 
         return best;
+    }
+
+    double nearestContactDistance() const
+    {
+        const double front_contact = scanSectorMin(
+            0.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+        const double left_corner_contact = scanSectorMin(
+            3.14159265358979323846 / 4.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+        const double right_corner_contact = scanSectorMin(
+            -3.14159265358979323846 / 4.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+
+        return std::min(
+            front_contact,
+            std::min(left_corner_contact, right_corner_contact)
+        );
     }
 
     double startHeadingAlignment(double wx, double wy) const
@@ -1236,6 +1264,53 @@ private:
             "Nav2 goal 생성 실패/벽 접촉 복구: %.2fs 동안 %.3fm/s 후진합니다. reason=%s",
             ESCAPE_BACKUP_DURATION,
             ESCAPE_BACKUP_SPEED,
+            reason.c_str()
+        );
+    }
+
+    void startContactReverseRecovery(const std::string& reason)
+    {
+        if (escape_active_ || goal_in_progress_ || canceling_goal_) {
+            return;
+        }
+
+        const double contact_distance = nearestContactDistance();
+
+        if (contact_distance >= CONTACT_OSCILLATION_DISTANCE) {
+            return;
+        }
+
+        const double rear_clearance = scanSectorMin(
+            3.14159265358979323846,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+
+        if (rear_clearance < CONTACT_REVERSE_REAR_CLEARANCE) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "접촉 후진 복구 생략: rear=%.3f, contact=%.3f, reason=%s",
+                rear_clearance,
+                contact_distance,
+                reason.c_str()
+            );
+            return;
+        }
+
+        geometry_msgs::msg::Twist stop;
+        escape_cmd_pub_->publish(stop);
+
+        escape_active_ = true;
+        escape_until_ = this->now() + rclcpp::Duration::from_seconds(CONTACT_REVERSE_DURATION);
+        recovery_linear_speed_ = -CONTACT_REVERSE_SPEED;
+        recovery_angular_speed_ = 0.0;
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "접촉 goal 실패 후 짧은 후진 복구: %.2fs 동안 %.3fm/s, contact=%.3f, rear=%.3f, reason=%s",
+            CONTACT_REVERSE_DURATION,
+            CONTACT_REVERSE_SPEED,
+            contact_distance,
+            rear_clearance,
             reason.c_str()
         );
     }
@@ -2900,6 +2975,7 @@ private:
 
         goal_in_progress_ = true;
         canceling_goal_ = false;
+        contact_oscillation_active_ = false;
         goal_start_x_ = robot_x_;
         goal_start_y_ = robot_y_;
         goal_start_projection_ = forwardProjection(robot_x_, robot_y_);
@@ -2969,7 +3045,33 @@ private:
         if (goal_distance + STUCK_GOAL_IMPROVEMENT < best_goal_distance_) {
             best_goal_distance_ = goal_distance;
             last_progress_time_ = this->now();
+            contact_oscillation_active_ = false;
             return;
+        }
+
+        const double contact_distance = nearestContactDistance();
+        const bool near_contact =
+            contact_distance < CONTACT_OSCILLATION_DISTANCE;
+
+        if (near_contact) {
+            if (!contact_oscillation_active_) {
+                contact_oscillation_active_ = true;
+                contact_oscillation_since_ = this->now();
+            } else if ((this->now() - contact_oscillation_since_).seconds() >
+                       CONTACT_OSCILLATION_TIMEOUT) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "접촉 후 제자리 회전 정체 감지. 현재 목표 취소: contact=%.3f, goal_distance=%.2f",
+                    contact_distance,
+                    goal_distance
+                );
+
+                contact_oscillation_active_ = false;
+                cancelCurrentGoalAndBlacklist();
+                return;
+            }
+        } else {
+            contact_oscillation_active_ = false;
         }
 
         if ((this->now() - last_progress_time_).seconds() < STUCK_TIMEOUT) {
@@ -3004,6 +3106,7 @@ private:
 
         bool should_escape_after_result = false;
         bool prefer_local_motion_after_result = false;
+        bool should_contact_reverse_after_result = false;
         std::string continue_reason = "after Nav2 result";
 
         if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
@@ -3021,6 +3124,8 @@ private:
                 consecutive_goal_failures_++;
                 addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
                 should_escape_after_result = canUseBackupRecovery();
+                should_contact_reverse_after_result =
+                    nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
                 prefer_local_motion_after_result = true;
                 continue_reason = "succeeded with almost no movement";
             } else {
@@ -3040,6 +3145,8 @@ private:
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
             consecutive_goal_failures_++;
             should_escape_after_result = canUseBackupRecovery();
+            should_contact_reverse_after_result =
+                nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
             prefer_local_motion_after_result = true;
             continue_reason = "stuck goal canceled";
         } else {
@@ -3054,6 +3161,8 @@ private:
             // 같은 실패 goal 반복만 짧게 막고, local fallback은 필요하면 blacklist를 무시한다.
             addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
             should_escape_after_result = canUseBackupRecovery();
+            should_contact_reverse_after_result =
+                nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
             prefer_local_motion_after_result = true;
             continue_reason = "Nav2 goal failed";
         }
@@ -3061,6 +3170,13 @@ private:
         active_goal_handle_.reset();
         canceling_goal_ = false;
         goal_in_progress_ = false;
+
+        if (should_contact_reverse_after_result) {
+            startContactReverseRecovery(continue_reason);
+            if (escape_active_) {
+                return;
+            }
+        }
 
         if (should_escape_after_result) {
             startEscapeRecovery("repeated Nav2 goal failure");
