@@ -1,0 +1,273 @@
+# v9 SAFETY: v7 fallback 기반 + 전진속도 상승. 실제 충돌 방지는 cmd_vel_safety_filter_v9가 담당
+bt_navigator:
+  ros__parameters:
+    global_frame: map
+    robot_base_frame: base_link
+    transform_tolerance: 1.5
+    filter_duration: 0.3
+    # maze_explorer는 자체적으로 실패 goal을 버리고 다음 goal을 고르므로,
+    # NavigateToPose BT에서는 후진 recovery가 없는 단순 재계획 트리를 사용한다.
+    default_nav_to_pose_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_w_replanning_time.xml"
+    default_nav_through_poses_bt_xml: "$(find-pkg-share nav2_bt_navigator)/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    always_reload_bt_xml: false
+    goal_blackboard_id: goal
+    path_blackboard_id: path
+    navigators: ['navigate_to_pose']
+    navigate_to_pose:
+      plugin: "nav2_bt_navigator::NavigateToPoseNavigator"
+
+controller_server:
+  ros__parameters:
+    controller_frequency: 20.0
+    enable_stamped_cmd_vel: false
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 10.0
+    progress_checker_plugins: ["progress_checker"]
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+    
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.03  # 미세한 움직임도 인정하여 조기 포기 방지
+      movement_time_allowance: 60.0
+      
+    goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.18
+      yaw_goal_tolerance: 6.28  # 프론티어 탐색 시 방향은 중요하지 않음
+      
+    FollowPath:
+      plugin: "teb_local_planner::TebLocalPlannerROS"
+      max_vel_x: 0.12           # 안전 필터와 속도 차이를 줄여 코너 shortcut을 완화
+      max_vel_x_backwards: 0.0  # 입구 방향 되감기 방지를 위해 후진 금지
+      max_vel_theta: 1.0
+      acc_lim_x: 1.0
+      acc_lim_theta: 0.9
+      min_turning_radius: 0.0   # 제자리 회전 완벽 지원
+      allow_init_with_backwards_motion: False
+      max_global_plan_lookahead_dist: 0.38
+      global_plan_prune_distance: 0.06
+      feasibility_check_lookahead_distance: 0.10
+      feasibility_check_no_poses: 2
+      global_plan_viapoint_sep: 0.05
+      
+      footprint_model:
+        type: "circular"
+        radius: 0.115            # Burger 실제 외곽+여유. 통로가 너무 좁으면 이 값을 줄이지 말고 통로를 넓혀야 함
+        
+      xy_goal_tolerance: 0.18
+      yaw_goal_tolerance: 6.28
+      free_goal_vel: true
+      
+      # 장애물 회피 설정
+      min_obstacle_dist: 0.060    # 좁은 통로는 유지하되 S자 안쪽 벽 긁힘을 줄임
+      include_costmap_obstacles: True
+      costmap_obstacles_behind_robot_dist: 0.5
+      obstacle_poses_affected: 18 # 최적화 연산량 감소 및 빠른 반응 속도 확보
+      
+      no_inner_iterations: 4
+      no_outer_iterations: 3
+      optimization_activate: True
+      optimization_verbose: False
+      penalty_epsilon: 0.02
+      
+      # 미로 돌파용 파라미터 튜닝
+      weight_max_vel_x: 2.0
+      weight_max_vel_theta: 1.0
+      weight_acc_lim_x: 1.0
+      weight_acc_lim_theta: 1.0
+      weight_kinematics_nh: 1000.0
+      weight_kinematics_forward_drive: 40.0   # 후진은 남기되 전진 주행을 더 선호
+      weight_kinematics_turning_radius: 1.0
+      weight_optimaltime: 6.0 
+      weight_obstacle: 95.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
+      weight_viapoint: 20.0                    # global path를 코너에서 과하게 자르지 않게 함
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 8.0
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_link
+      rolling_window: true
+      width: 3
+      height: 3
+      resolution: 0.02
+      robot_radius: 0.115          # Nav2 costmap과 TEB footprint를 반드시 동일하게 맞춤
+      plugins: ["obstacle_layer", "inflation_layer"] # 연산량 확보를 위해 voxel 제외
+      
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        inflation_radius: 0.14      # 파란 cost band가 통로 전체를 덮지 않게 얇게 유지
+        cost_scaling_factor: 6.0
+        
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 1.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          obstacle_max_range: 2.5
+          raytrace_max_range: 3.0
+          inf_is_valid: true
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link
+      transform_tolerance: 1.5
+      # Global planner만 약간 덜 보수적으로 둔다.
+      # 실제 충돌 회피는 local_costmap + TEB radius 0.115가 담당한다.
+      robot_radius: 0.115
+      resolution: 0.02
+      track_unknown_space: true
+      plugins: ["static_layer", "inflation_layer"]
+      
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 1.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 3.5
+          obstacle_max_range: 3.0
+          
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_topic: /map_no_return
+        map_subscribe_transient_local: true
+        
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # 전역 경로가 좁은 통로를 막힌 곳으로 판단하지 않게 완화
+        inflation_radius: 0.12
+        cost_scaling_factor: 6.0
+      always_send_full_costmap: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 5.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      # 짧은 0.5~1.2m goal을 쓰므로 planner tolerance가 크면 현재 위치 근처에서 goal succeeded가 반복된다.
+      tolerance: 0.25
+      use_astar: true
+      allow_unknown: true
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    transform_timeout: 0.1
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 1.0
+    min_rotational_vel: 0.15
+    rotational_acc_lim: 0.9
+    enable_stamped_cmd_vel: false
+
+velocity_smoother:
+  ros__parameters:
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.17, 0.0, 1.0]
+    min_velocity: [0.0, 0.0, -1.0]
+    deadband_velocity: [0.0, 0.0, 0.0]
+    velocity_timeout: 1.0
+    max_accel: [1.0, 0.0, 0.9]
+    max_decel: [-1.1, 0.0, -1.0]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    enable_stamped_cmd_vel: false
+
+# Collision Monitor는 좁은 통로에서 거짓 양성(False Positive)으로 로봇을 정지시키므로 비활성화 또는 대폭 완화
+collision_monitor:
+  ros__parameters:
+    enabled: false
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_smoothed"
+    cmd_vel_out_topic: "cmd_vel_nav"
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 1.5
+    source_timeout: 5.0
+    enable_stamped_cmd_vel: false
+    polygons: ["PolygonStop"]
+    PolygonStop:
+      type: "circle"
+      radius: 0.12 # 로봇 쉘 바로 바깥까지만 체크
+      action_type: "stop"
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "polygon_stop"
+      enabled: false
+    observation_sources: ["scan"]
+    scan:
+      source_timeout: 0.2
+      type: "scan"
+      topic: "/scan"
+      enabled: true
+
+cmd_vel_safety_filter:
+  ros__parameters:
+    nav_cmd_topic: "/cmd_vel_nav"
+    safe_cmd_topic: "/cmd_vel"
+    scan_topic: "/scan"
+    max_linear: 0.10
+    max_reverse: 0.06
+    max_angular: 1.20
+    # laser TF를 yaw 3.14159로 publish하는 현재 구성에서는 LaserScan raw frame의 정면이 pi 근처일 수 있다.
+    # RViz에서 /scan 정면 sector가 반대로 보이면 실행 시 front_angle_offset:=0.0으로 비교한다.
+    front_angle_offset: 3.14159
+    front_stop: 0.085
+    front_slow: 0.215
+    side_stop: 0.080
+    side_slow: 0.130
+    front_half_width_deg: 14.0
+    wide_half_width_deg: 24.0
+    corner_angle_deg: 38.0
+    corner_half_width_deg: 10.0
+    side_angle_deg: 82.0
+    side_half_width_deg: 12.0
+    side_turn_stop: 0.075
+    side_turn_slow: 0.125
+    corner_stop: 0.095
+    corner_slow: 0.165
+    side_linear_stop: 0.065
+    side_linear_slow: 0.115
+    side_imbalance_allowance: 0.030
+    wall_nudge_angular: 0.14
+    min_creep_linear: 0.035
+    pure_turn_linear_epsilon: 0.010
+    preserve_turn_angular: 0.080
+    command_timeout: 0.35
+    scan_timeout: 0.60

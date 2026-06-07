@@ -1,8 +1,10 @@
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <nav_msgs/msg/path.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav2_msgs/action/compute_path_to_pose.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/transform_listener.h>
@@ -14,10 +16,13 @@
 #include <limits>
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <string>
 
 using NavigateToPose = nav2_msgs::action::NavigateToPose;
+using ComputePathToPose = nav2_msgs::action::ComputePathToPose;
 using GoalHandleNav2 = rclcpp_action::ClientGoalHandle<NavigateToPose>;
+using GoalHandleComputePath = rclcpp_action::ClientGoalHandle<ComputePathToPose>;
 using std::placeholders::_1;
 
 class MazeExplorer : public rclcpp::Node
@@ -43,7 +48,12 @@ public:
         // Nav2의 cmd_vel을 safety filter로 보내기 위한 입력 토픽.
         // 실제 로봇으로 나가는 /cmd_vel은 safety filter가 publish해야 한다.
         escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
+        filtered_map_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(
+            "/map_no_return",
+            rclcpp::QoS(1).transient_local().reliable()
+        );
         nav_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
+        path_client_ = rclcpp_action::create_client<ComputePathToPose>(this, "compute_path_to_pose");
 
         watchdog_timer_ = this->create_wall_timer(
             std::chrono::seconds(1),
@@ -67,8 +77,10 @@ private:
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
+    rclcpp_action::Client<ComputePathToPose>::SharedPtr path_client_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr escape_cmd_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr filtered_map_pub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
     rclcpp::TimerBase::SharedPtr idle_retry_timer_;
     rclcpp::TimerBase::SharedPtr escape_timer_;
@@ -82,6 +94,7 @@ private:
 
     bool goal_in_progress_ = false;
     bool canceling_goal_ = false;
+    bool path_validation_in_progress_ = false;
     bool escape_active_ = false;
     rclcpp::Time escape_until_;
     double recovery_linear_speed_ = 0.0;
@@ -107,15 +120,18 @@ private:
     {
         double x;
         double y;
+        double radius;
         rclcpp::Time expires_at;
     };
 
     std::vector<BlacklistEntry> blacklist_;
 
-    const double BLACKLIST_RADIUS = 0.08;
+    const double BLACKLIST_RADIUS = 0.16;
+    const double POCKET_BLACKLIST_RADIUS = 0.58;
     const double BLACKLIST_TTL_SUCCESS = 3.0;
     const double BLACKLIST_TTL_FAILURE = 5.0;
     const double BLACKLIST_TTL_CANCEL = 4.0;
+    const double POCKET_BLACKLIST_TTL = 10.0;
 
     const double GOAL_CLEARANCE = 0.110;
     const double PATH_CLEARANCE = 0.095;
@@ -139,6 +155,9 @@ private:
     const double START_RETURN_ARM_DISTANCE = 0.85;
     const double START_RETURN_GOAL_RADIUS = 0.75;
     const double START_RETURN_CANCEL_RADIUS = 0.50;
+    const double NO_RETURN_MAP_BLOCK_RADIUS = 0.48;
+    const double NO_RETURN_MAP_ROBOT_KEEP_RADIUS = 0.32;
+    const double PATH_VALIDATION_IGNORE_NEAR_ROBOT = 0.25;
     const double ENTRANCE_NO_RETURN_PATH_DISTANCE = 0.75;
     const double ENTRANCE_NO_RETURN_WORLD_RADIUS = 0.70;
     const double NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE = 0.20;
@@ -180,8 +199,11 @@ private:
     const double CONTACT_REVERSE_REAR_CLEARANCE = 0.14;
     const double CONTACT_WIDE_RAY_SPEED = 0.040;
     const double CONTACT_WIDE_RAY_DURATION = 0.65;
+    const double POCKET_WIDE_RAY_SPEED = 0.075;
+    const double POCKET_WIDE_RAY_DURATION = 1.15;
     const double CONTACT_WIDE_RAY_MIN_DISTANCE = 0.18;
     const double CONTACT_WIDE_RAY_MAX_DISTANCE = 0.75;
+    const double POCKET_WIDE_RAY_MAX_DISTANCE = 1.10;
     const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
@@ -198,6 +220,7 @@ private:
     const double LOCAL_ESCAPE_REVERSE_SCAN_DISTANCE = 0.16;
     const double LOCAL_ESCAPE_REVERSE_SPEED = 0.035;
     const double LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE = 0.05;
+    const double POCKET_ESCAPE_REVERSE_PROJECTION_ALLOWANCE = 0.75;
     const double LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE = 0.16;
     const double LOCAL_ESCAPE_FORWARD_RAY_DISTANCE = 0.30;
     const double LOCAL_ESCAPE_STEP_DISTANCE = 0.45;
@@ -207,6 +230,10 @@ private:
     const double BRANCH_ESCAPE_MIN_PATH_DISTANCE = 0.70;
     const double BRANCH_ESCAPE_MAX_PATH_DISTANCE = 2.40;
     const double BRANCH_ESCAPE_MAX_START_PATH_LOSS = 1.40;
+    const double BRANCH_ESCAPE_PROJECTION_BACKTRACK_ALLOWANCE = 0.85;
+    const double BRANCH_ESCAPE_CANCEL_PROJECTION_ALLOWANCE = 0.90;
+    const double BRANCH_ESCAPE_CANCEL_DISTANCE_ALLOWANCE = 0.75;
+    const double BRANCH_ESCAPE_COMMIT_DURATION = 4.0;
     const double BRANCH_ESCAPE_MIN_CLEARANCE = 0.095;
     const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.085;
 
@@ -216,6 +243,7 @@ private:
     const double ESCAPE_LINE_CLEARANCE = 0.070;
 
     const int MIN_FRONTIER_CLUSTER_SIZE = 6;
+    const int MAX_FRONTIER_CANDIDATES_PER_CLUSTER = 28;
 
     double current_goal_x_ = 0.0;
     double current_goal_y_ = 0.0;
@@ -230,18 +258,45 @@ private:
     std::string pending_contact_recovery_reason_;
     rclcpp::Time pending_contact_recovery_since_;
     int local_escape_spin_failures_ = 0;
+    int no_reachable_goal_failures_ = 0;
+    bool pending_goal_is_branch_escape_ = false;
+    bool current_goal_is_branch_escape_ = false;
+    bool pending_path_validation_enforce_no_return_ = false;
+    rclcpp::Time branch_escape_commit_until_;
+    uint64_t nav_goal_request_id_ = 0;
+    uint64_t active_nav_goal_request_id_ = 0;
+    geometry_msgs::msg::PoseStamped pending_validated_goal_;
+    rclcpp::Time path_validation_started_;
+    uint64_t path_validation_request_id_ = 0;
+    uint64_t active_path_validation_request_id_ = 0;
+    bool start_metrics_cache_valid_ = false;
+    int64_t cached_start_map_stamp_ns_ = 0;
+    uint32_t cached_start_map_width_ = 0;
+    uint32_t cached_start_map_height_ = 0;
+    double cached_start_map_resolution_ = 0.0;
+    double cached_start_map_origin_x_ = 0.0;
+    double cached_start_map_origin_y_ = 0.0;
+    std::vector<int> cached_start_distances_;
+    std::vector<double> cached_start_bottleneck_clearances_;
 
     void mapCallback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
     {
         latest_map_ = msg;
 
         if (!updateRobotPose()) {
+            publishNoReturnMap(msg);
             return;
         }
 
         saveStartPoseOnce();
         updateForwardProgress();
         updateStartPathProgress(msg);
+        publishNoReturnMap(msg);
+
+        if (path_validation_in_progress_) {
+            checkPathValidationTimeout();
+            return;
+        }
 
         if (goal_in_progress_) {
             if (isBacktrackingTowardEntrance()) {
@@ -312,6 +367,7 @@ private:
             max_start_distance_ = 0.0;
             max_start_path_distance_ = 0.0;
             current_start_path_distance_ = 0.0;
+            start_metrics_cache_valid_ = false;
             is_start_position_saved_ = true;
 
             RCLCPP_INFO(
@@ -460,17 +516,103 @@ private:
 
     void addBlacklistPoint(double wx, double wy, double ttl_seconds)
     {
+        addBlacklistPoint(wx, wy, BLACKLIST_RADIUS, ttl_seconds);
+    }
+
+    void addBlacklistPoint(double wx, double wy, double radius, double ttl_seconds)
+    {
         pruneExpiredBlacklist();
 
         blacklist_.push_back({
             wx,
             wy,
+            radius,
             this->now() + rclcpp::Duration::from_seconds(ttl_seconds)
         });
 
-        if (blacklist_.size() > 16) {
-            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 4);
+        if (blacklist_.size() > 28) {
+            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 6);
         }
+    }
+
+    bool isBlacklistedPoint(double wx, double wy) const
+    {
+        const rclcpp::Time now = this->now();
+
+        for (const auto& entry : blacklist_) {
+            if (entry.expires_at > now &&
+                std::hypot(wx - entry.x, wy - entry.y) < entry.radius) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void addPocketBlacklist(const std::string& reason)
+    {
+        addPocketBlacklistForTarget(current_goal_x_, current_goal_y_, reason);
+    }
+
+    void addPocketBlacklistForTarget(double target_x, double target_y, const std::string& reason)
+    {
+        if (!hasLeftEntrance()) {
+            return;
+        }
+
+        addBlacklistPoint(
+            robot_x_,
+            robot_y_,
+            POCKET_BLACKLIST_RADIUS,
+            POCKET_BLACKLIST_TTL
+        );
+        addBlacklistPoint(
+            target_x,
+            target_y,
+            POCKET_BLACKLIST_RADIUS,
+            POCKET_BLACKLIST_TTL
+        );
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "포켓 반복 진입 방지: 현재 위치와 실패 goal 주변 %.2fm를 %.1fs 동안 금지합니다. reason=%s",
+            POCKET_BLACKLIST_RADIUS,
+            POCKET_BLACKLIST_TTL,
+            reason.c_str()
+        );
+    }
+
+    void publishNoReturnMap(const nav_msgs::msg::OccupancyGrid::SharedPtr& map)
+    {
+        if (!filtered_map_pub_) {
+            return;
+        }
+
+        nav_msgs::msg::OccupancyGrid filtered = *map;
+
+        if (is_start_position_saved_ && hasLeftEntrance()) {
+            const int width = static_cast<int>(filtered.info.width);
+            const int height = static_cast<int>(filtered.info.height);
+
+            for (int my = 0; my < height; ++my) {
+                for (int mx = 0; mx < width; ++mx) {
+                    const double wx = mapToWorldX(map, mx);
+                    const double wy = mapToWorldY(map, my);
+
+                    if (std::hypot(wx - robot_x_, wy - robot_y_) <
+                        NO_RETURN_MAP_ROBOT_KEEP_RADIUS) {
+                        continue;
+                    }
+
+                    if (distanceFromStart(wx, wy) < NO_RETURN_MAP_BLOCK_RADIUS ||
+                        forwardProjection(wx, wy) < START_LINE_MARGIN) {
+                        filtered.data[my * width + mx] = 100;
+                    }
+                }
+            }
+        }
+
+        filtered_map_pub_->publish(filtered);
     }
 
     bool hasLeftEntrance() const
@@ -483,6 +625,12 @@ private:
     {
         return hasLeftEntrance() &&
                distanceFromStart(wx, wy) < START_RETURN_GOAL_RADIUS;
+    }
+
+    bool isBranchEscapeCommitActive()
+    {
+        return current_goal_is_branch_escape_ &&
+               this->now() < branch_escape_commit_until_;
     }
 
     bool isEntranceReturnForbiddenCandidate(
@@ -523,7 +671,7 @@ private:
         return false;
     }
 
-    bool isBacktrackingTowardEntrance() const
+    bool isBacktrackingTowardEntrance()
     {
         // dead-end 탈출을 위한 아주 짧은 후퇴만 허용한다.
         // 최대 진입 깊이에서 크게 되돌아가면 입구 복귀로 보고 즉시 막는다.
@@ -535,20 +683,31 @@ private:
             return true;
         }
 
+        const bool branch_escape = isBranchEscapeCommitActive();
+        const double projection_allowance = branch_escape ?
+            BRANCH_ESCAPE_CANCEL_PROJECTION_ALLOWANCE :
+            NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE;
+        const double distance_allowance = branch_escape ?
+            BRANCH_ESCAPE_CANCEL_DISTANCE_ALLOWANCE :
+            NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE;
+        const double path_allowance = branch_escape ?
+            std::max(START_PATH_CANCEL_BACKTRACK, BRANCH_ESCAPE_MAX_START_PATH_LOSS) :
+            START_PATH_CANCEL_BACKTRACK;
+
         if (forwardProjection(robot_x_, robot_y_) +
-            NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+            projection_allowance <
             max_forward_projection_) {
             return true;
         }
 
         if (distanceFromStart(robot_x_, robot_y_) +
-            NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+            distance_allowance <
             max_start_distance_) {
             return true;
         }
 
         if (max_start_path_distance_ >= START_PATH_CANCEL_ARM_DISTANCE &&
-            current_start_path_distance_ + START_PATH_CANCEL_BACKTRACK <
+            current_start_path_distance_ + path_allowance <
             max_start_path_distance_) {
             return true;
         }
@@ -594,14 +753,11 @@ private:
             return true;
         }
 
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
-        if (!computeReachableMetricsFrom(
+        if (!getStartReachableMetrics(
                 map,
-                start_x_,
-                start_y_,
-                false,
                 start_distances,
                 start_bottleneck_clearances)) {
             return true;
@@ -617,12 +773,12 @@ private:
         const int width = static_cast<int>(map->info.width);
         const int index = my * width + mx;
 
-        if (start_distances[index] < 0) {
+        if ((*start_distances)[index] < 0) {
             return true;
         }
 
         const double start_path_distance =
-            start_distances[index] * map->info.resolution;
+            (*start_distances)[index] * map->info.resolution;
 
         if (isEntranceReturnForbiddenCandidate(wx, wy, start_path_distance)) {
             return true;
@@ -1089,6 +1245,51 @@ private:
         );
     }
 
+    bool getStartReachableMetrics(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        const std::vector<int>*& distances,
+        const std::vector<double>*& bottleneck_clearances)
+    {
+        if (!is_start_position_saved_) {
+            return false;
+        }
+
+        const int64_t map_stamp_ns = rclcpp::Time(map->header.stamp).nanoseconds();
+        const bool cache_matches =
+            start_metrics_cache_valid_ &&
+            cached_start_map_stamp_ns_ == map_stamp_ns &&
+            cached_start_map_width_ == map->info.width &&
+            cached_start_map_height_ == map->info.height &&
+            std::abs(cached_start_map_resolution_ - map->info.resolution) < 1e-9 &&
+            std::abs(cached_start_map_origin_x_ - map->info.origin.position.x) < 1e-9 &&
+            std::abs(cached_start_map_origin_y_ - map->info.origin.position.y) < 1e-9;
+
+        if (!cache_matches) {
+            if (!computeReachableMetricsFrom(
+                    map,
+                    start_x_,
+                    start_y_,
+                    false,
+                    cached_start_distances_,
+                    cached_start_bottleneck_clearances_)) {
+                start_metrics_cache_valid_ = false;
+                return false;
+            }
+
+            cached_start_map_stamp_ns_ = map_stamp_ns;
+            cached_start_map_width_ = map->info.width;
+            cached_start_map_height_ = map->info.height;
+            cached_start_map_resolution_ = map->info.resolution;
+            cached_start_map_origin_x_ = map->info.origin.position.x;
+            cached_start_map_origin_y_ = map->info.origin.position.y;
+            start_metrics_cache_valid_ = true;
+        }
+
+        distances = &cached_start_distances_;
+        bottleneck_clearances = &cached_start_bottleneck_clearances_;
+        return true;
+    }
+
     bool updateStartPathProgress(
         const nav_msgs::msg::OccupancyGrid::SharedPtr& map)
     {
@@ -1099,14 +1300,11 @@ private:
         const int width = static_cast<int>(map->info.width);
         const double resolution = map->info.resolution;
 
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
-        if (!computeReachableMetricsFrom(
+        if (!getStartReachableMetrics(
                 map,
-                start_x_,
-                start_y_,
-                false,
                 start_distances,
                 start_bottleneck_clearances)) {
             return false;
@@ -1121,11 +1319,11 @@ private:
 
         const int robot_index = robot_my * width + robot_mx;
 
-        if (start_distances[robot_index] < 0) {
+        if ((*start_distances)[robot_index] < 0) {
             return false;
         }
 
-        current_start_path_distance_ = start_distances[robot_index] * resolution;
+        current_start_path_distance_ = (*start_distances)[robot_index] * resolution;
         max_start_path_distance_ = std::max(
             max_start_path_distance_,
             current_start_path_distance_
@@ -1136,7 +1334,11 @@ private:
 
     bool trySendNextGoal()
     {
-        if (!latest_map_ || goal_in_progress_ || canceling_goal_ || escape_active_) {
+        if (!latest_map_ ||
+            goal_in_progress_ ||
+            canceling_goal_ ||
+            path_validation_in_progress_ ||
+            escape_active_) {
             return false;
         }
 
@@ -1183,12 +1385,8 @@ private:
 
         if (!found_goal) {
             if (hasLeftEntrance()) {
-                found_goal = findBestFrontier(latest_map_, next_goal, false);
-
-                if (!found_goal) {
-                    found_goal = makeBranchEscapeGoal(latest_map_, next_goal);
-                    allow_branch_escape_goal = found_goal;
-                }
+                found_goal = makeBranchEscapeGoal(latest_map_, next_goal);
+                allow_branch_escape_goal = found_goal;
 
                 if (!found_goal) {
                     found_goal = makeKeepMovingGoal(latest_map_, next_goal);
@@ -1201,17 +1399,23 @@ private:
         }
 
         if (!found_goal) {
+            no_reachable_goal_failures_++;
             RCLCPP_WARN(
                 this->get_logger(),
                 "v12: 보낼 수 있는 frontier/local goal이 없습니다. 멈추지 않고 전진 크리프를 시도합니다."
             );
             if (canUseBackupRecovery()) {
                 startEscapeRecovery("no reachable v12 goal");
+            } else if (no_reachable_goal_failures_ >= 2 &&
+                       startWideRayRecovery("repeated no reachable v12 goal")) {
+                return true;
             } else {
                 startForwardCreep("no reachable v12 goal");
             }
             return true;
         }
+
+        no_reachable_goal_failures_ = 0;
 
         if (!allow_branch_escape_goal &&
             violatesNoReturnPolicy(
@@ -1245,6 +1449,11 @@ private:
             );
             startForwardCreep("blocked entrance-direction goal");
             return true;
+        }
+
+        pending_goal_is_branch_escape_ = allow_branch_escape_goal;
+        if (allow_branch_escape_goal) {
+            return requestPathValidatedGoal(next_goal, false);
         }
 
         sendGoal(next_goal);
@@ -1305,6 +1514,14 @@ private:
 
         const double current_projection = forwardProjection(robot_x_, robot_y_);
         const double pi = 3.14159265358979323846;
+        const bool aggressive =
+            reason.find("branch path") != std::string::npos ||
+            reason.find("repeated planner failure") != std::string::npos ||
+            reason.find("repeated no reachable") != std::string::npos ||
+            reason.find("Nav2 goal failed") != std::string::npos ||
+            reason.find("repeated spin") != std::string::npos;
+        const double ray_max =
+            aggressive ? POCKET_WIDE_RAY_MAX_DISTANCE : CONTACT_WIDE_RAY_MAX_DISTANCE;
         const std::vector<double> angle_offsets = {
             0.0,
             pi / 12.0,
@@ -1320,7 +1537,10 @@ private:
             pi * 2.0 / 3.0,
             -pi * 2.0 / 3.0,
             pi * 3.0 / 4.0,
-            -pi * 3.0 / 4.0
+            -pi * 3.0 / 4.0,
+            pi * 5.0 / 6.0,
+            -pi * 5.0 / 6.0,
+            pi
         };
 
         bool found_direction = false;
@@ -1339,7 +1559,7 @@ private:
             const double ray_distance = rayClearDistance(
                 latest_map_,
                 yaw,
-                CONTACT_WIDE_RAY_MAX_DISTANCE,
+                ray_max,
                 LOCAL_ESCAPE_RAY_CLEARANCE
             );
 
@@ -1370,9 +1590,9 @@ private:
                 std::max(0.0, current_projection - projected_next);
             double score = 0.0;
             score += 2.20 * ray_distance;
-            score += 1.40 * std::min(scan_clearance, CONTACT_WIDE_RAY_MAX_DISTANCE);
-            score -= 0.45 * std::abs(offset);
-            score -= 0.90 * projection_loss;
+            score += 1.40 * std::min(scan_clearance, ray_max);
+            score -= (aggressive ? 0.30 : 0.45) * std::abs(offset);
+            score -= (aggressive ? 0.25 : 0.90) * projection_loss;
 
             if (!found_direction || score > best_score) {
                 found_direction = true;
@@ -1393,13 +1613,15 @@ private:
             std::cos(best_yaw - robot_yaw_)
         );
 
-        recovery_linear_speed_ = CONTACT_WIDE_RAY_SPEED;
+        recovery_linear_speed_ =
+            aggressive ? POCKET_WIDE_RAY_SPEED : CONTACT_WIDE_RAY_SPEED;
         if (std::abs(yaw_error) > LOCAL_ESCAPE_ALIGN_YAW) {
-            recovery_linear_speed_ = CONTACT_WIDE_RAY_SPEED * 0.35;
+            recovery_linear_speed_ =
+                aggressive ? 0.0 : CONTACT_WIDE_RAY_SPEED * 0.35;
         }
 
         recovery_angular_speed_ = std::clamp(
-            1.20 * yaw_error,
+            (aggressive ? 1.45 : 1.20) * yaw_error,
             -LOCAL_ESCAPE_MAX_TURN_SPEED,
             LOCAL_ESCAPE_MAX_TURN_SPEED
         );
@@ -1408,12 +1630,15 @@ private:
         escape_cmd_pub_->publish(stop);
 
         escape_active_ = true;
-        escape_until_ = this->now() + rclcpp::Duration::from_seconds(CONTACT_WIDE_RAY_DURATION);
+        escape_until_ = this->now() + rclcpp::Duration::from_seconds(
+            aggressive ? POCKET_WIDE_RAY_DURATION : CONTACT_WIDE_RAY_DURATION
+        );
         local_escape_spin_failures_ = 0;
 
         RCLCPP_WARN(
             this->get_logger(),
-            "접촉 복구: 가장 넓은 ray 방향으로 짧게 이동합니다. linear=%.3f, angular=%.3f, map_ray=%.2f, scan=%.2f, proj=%.2f -> %.2f, reason=%s",
+            "접촉 복구: 가장 넓은 ray 방향으로 짧게 이동합니다. mode=%s, linear=%.3f, angular=%.3f, map_ray=%.2f, scan=%.2f, proj=%.2f -> %.2f, reason=%s",
+            aggressive ? "pocket" : "contact",
             recovery_linear_speed_,
             recovery_angular_speed_,
             best_ray,
@@ -1706,6 +1931,11 @@ private:
             std::sin(best_yaw - robot_yaw_),
             std::cos(best_yaw - robot_yaw_)
         );
+        const bool planner_failure_escape =
+            consecutive_goal_failures_ >= 2 ||
+            no_reachable_goal_failures_ >= 2 ||
+            reason.find("Nav2 goal failed") != std::string::npos ||
+            reason.find("no reachable") != std::string::npos;
 
         if (!found_direction &&
             local_escape_spin_failures_ >= LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE) {
@@ -1714,7 +1944,7 @@ private:
                 return;
             }
 
-            if (scan_ready) {
+            if (scan_ready && !planner_failure_escape) {
                 const double rear_clearance = scanSectorMin(
                     3.14159265358979323846,
                     LOCAL_ESCAPE_SCAN_HALF_WIDTH
@@ -1774,19 +2004,27 @@ private:
             recovery_angular_speed_ = FORWARD_CREEP_TURN_SPEED;
         }
 
-        if (!found_direction && scan_ready) {
+        if (!found_direction && scan_ready && !planner_failure_escape) {
             const double rear_clearance = scanSectorMin(
                 3.14159265358979323846,
                 LOCAL_ESCAPE_SCAN_HALF_WIDTH
             );
-            const double reverse_projection = forwardProjection(
-                robot_x_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
-                robot_y_ - FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
-            );
+            const double reverse_x =
+                robot_x_ -
+                FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_);
+            const double reverse_y =
+                robot_y_ -
+                FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_);
+            const double reverse_projection = forwardProjection(reverse_x, reverse_y);
+            const double reverse_allowance =
+                consecutive_goal_failures_ > 0 ?
+                POCKET_ESCAPE_REVERSE_PROJECTION_ALLOWANCE :
+                LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE;
             const bool reverse_keeps_progress =
                 !hasLeftEntrance() ||
-                reverse_projection + LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE >=
-                current_projection;
+                (!isInEntranceReturnZone(reverse_x, reverse_y) &&
+                 reverse_projection >= START_LINE_MARGIN &&
+                 reverse_projection + reverse_allowance >= current_projection);
 
             if (rear_clearance > LOCAL_ESCAPE_REVERSE_SCAN_DISTANCE &&
                 reverse_keeps_progress) {
@@ -1852,6 +2090,7 @@ private:
     {
         addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_CANCEL);
         canceling_goal_ = true;
+        current_goal_is_branch_escape_ = false;
 
         geometry_msgs::msg::Twist stop;
         for (int i = 0; i < 3; ++i) {
@@ -2274,8 +2513,8 @@ private:
     {
         std::vector<int> reachable_distances;
         std::vector<double> reachable_bottleneck_clearances;
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
         if (!computeReachableMetrics(
                 map,
@@ -2284,11 +2523,8 @@ private:
             return false;
         }
 
-        if (!computeReachableMetricsFrom(
+        if (!getStartReachableMetrics(
                 map,
-                start_x_,
-                start_y_,
-                false,
                 start_distances,
                 start_bottleneck_clearances)) {
             return false;
@@ -2324,7 +2560,7 @@ private:
 
                     if (map->data[index] != 0 ||
                         reachable_distances[index] < 0 ||
-                        start_distances[index] < 0) {
+                        (*start_distances)[index] < 0) {
                         continue;
                     }
 
@@ -2360,7 +2596,7 @@ private:
                         continue;
                     }
 
-                    const double start_path_distance = start_distances[index] * resolution;
+                    const double start_path_distance = (*start_distances)[index] * resolution;
 
                     if (isEntranceReturnForbiddenCandidate(
                             wx,
@@ -2389,20 +2625,9 @@ private:
                         continue;
                     }
 
-                    if (!ignore_blacklist) {
-                        bool is_blacklisted = false;
-
-                        for (const auto& bp : blacklist_) {
-                            if (std::hypot(wx - bp.x, wy - bp.y) <
-                                KEEP_MOVING_BLACKLIST_RADIUS) {
-                                is_blacklisted = true;
-                                break;
-                            }
-                        }
-
-                        if (is_blacklisted) {
-                            continue;
-                        }
+                    if (isBlacklistedPoint(wx, wy) &&
+                        (!ignore_blacklist || hasLeftEntrance())) {
+                        continue;
                     }
 
                     const double yaw = std::atan2(wy - robot_y_, wx - robot_x_);
@@ -2576,8 +2801,8 @@ private:
     {
         std::vector<int> reachable_distances;
         std::vector<double> reachable_bottleneck_clearances;
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
         if (!computeReachableMetricsFrom(
                 map,
@@ -2589,11 +2814,8 @@ private:
             return false;
         }
 
-        if (!computeReachableMetricsFrom(
+        if (!getStartReachableMetrics(
                 map,
-                start_x_,
-                start_y_,
-                false,
                 start_distances,
                 start_bottleneck_clearances)) {
             return false;
@@ -2621,7 +2843,7 @@ private:
 
                 if (map->data[index] != 0 ||
                     reachable_distances[index] < 0 ||
-                    start_distances[index] < 0) {
+                    (*start_distances)[index] < 0) {
                     continue;
                 }
 
@@ -2635,15 +2857,7 @@ private:
                 const double wx = mapToWorldX(map, mx);
                 const double wy = mapToWorldY(map, my);
 
-                bool is_blacklisted = false;
-                for (const auto& bp : blacklist_) {
-                    if (std::hypot(wx - bp.x, wy - bp.y) < BLACKLIST_RADIUS) {
-                        is_blacklisted = true;
-                        break;
-                    }
-                }
-
-                if (is_blacklisted) {
+                if (isBlacklistedPoint(wx, wy)) {
                     continue;
                 }
 
@@ -2652,7 +2866,7 @@ private:
                     continue;
                 }
 
-                const double start_path_distance = start_distances[index] * resolution;
+                const double start_path_distance = (*start_distances)[index] * resolution;
 
                 if (start_path_distance < ENTRANCE_NO_RETURN_PATH_DISTANCE) {
                     continue;
@@ -2665,7 +2879,9 @@ private:
 
                 const double projection = forwardProjection(wx, wy);
 
-                if (projection < START_LINE_MARGIN) {
+                if (projection < START_LINE_MARGIN ||
+                    projection + BRANCH_ESCAPE_PROJECTION_BACKTRACK_ALLOWANCE <
+                    current_projection) {
                     continue;
                 }
 
@@ -2829,14 +3045,7 @@ private:
                     continue;
                 }
 
-                bool is_blacklisted = false;
-
-                for (const auto& bp : blacklist_) {
-                    if (std::hypot(wx - bp.x, wy - bp.y) < KEEP_MOVING_BLACKLIST_RADIUS) {
-                        is_blacklisted = true;
-                        break;
-                    }
-                }
+                const bool is_blacklisted = isBlacklistedPoint(wx, wy);
 
                 const double angle_cost = std::abs(std::atan2(
                     std::sin(yaw - robot_yaw_),
@@ -2850,7 +3059,7 @@ private:
                 score -= 0.7 * angle_cost;
 
                 if (is_blacklisted) {
-                    score -= 1.5;
+                    score -= 4.0;
                 }
 
                 if (!found || score > best_score) {
@@ -2919,8 +3128,8 @@ private:
         std::vector<bool> visited(width * height, false);
         std::vector<int> reachable_distances;
         std::vector<double> reachable_bottleneck_clearances;
-        std::vector<int> start_distances;
-        std::vector<double> start_bottleneck_clearances;
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
         if (!computeReachableMetrics(
                 map,
@@ -2929,11 +3138,8 @@ private:
             return false;
         }
 
-        if (!computeReachableMetricsFrom(
+        if (!getStartReachableMetrics(
                 map,
-                start_x_,
-                start_y_,
-                false,
                 start_distances,
                 start_bottleneck_clearances)) {
             return false;
@@ -2946,8 +3152,8 @@ private:
         if (worldToMap(map, robot_x_, robot_y_, robot_mx, robot_my)) {
             const int robot_index = robot_my * width + robot_mx;
 
-            if (start_distances[robot_index] >= 0) {
-                current_start_path = start_distances[robot_index] * resolution;
+            if ((*start_distances)[robot_index] >= 0) {
+                current_start_path = (*start_distances)[robot_index] * resolution;
                 current_start_path_distance_ = current_start_path;
                 max_start_path_distance_ = std::max(
                     max_start_path_distance_,
@@ -3016,8 +3222,25 @@ private:
                     continue;
                 }
 
-                // cluster 대표점들을 모두 보되, goal은 frontier 바로 앞의 안전한 reachable cell로 옮긴다.
-                for (const int frontier_index : cluster) {
+                // 큰 frontier는 대표점만 평가해서 goal 생성 지연을 줄인다.
+                const int candidate_stride = std::max(
+                    1,
+                    static_cast<int>(
+                        std::ceil(
+                            static_cast<double>(cluster.size()) /
+                            MAX_FRONTIER_CANDIDATES_PER_CLUSTER
+                        )
+                    )
+                );
+
+                for (size_t cluster_i = 0; cluster_i < cluster.size(); ++cluster_i) {
+                    if (candidate_stride > 1 &&
+                        cluster_i % static_cast<size_t>(candidate_stride) != 0 &&
+                        cluster_i + 1 != cluster.size()) {
+                        continue;
+                    }
+
+                    const int frontier_index = cluster[cluster_i];
                     const int frontier_mx = frontier_index % width;
                     const int frontier_my = frontier_index / width;
 
@@ -3060,7 +3283,7 @@ private:
 
                     const int goal_index = goal_my * width + goal_mx;
 
-                    if (reachable_distances[goal_index] < 0 || start_distances[goal_index] < 0) {
+                    if (reachable_distances[goal_index] < 0 || (*start_distances)[goal_index] < 0) {
                         continue;
                     }
 
@@ -3072,7 +3295,7 @@ private:
                     }
 
                     const double current_path_distance = reachable_distances[goal_index] * resolution;
-                    const double start_path_distance = start_distances[goal_index] * resolution;
+                    const double start_path_distance = (*start_distances)[goal_index] * resolution;
                     const double path_bottleneck_clearance = reachable_bottleneck_clearances[goal_index];
                     const double final_goal_distance =
                         std::hypot(goal_wx - robot_x_, goal_wy - robot_y_);
@@ -3107,15 +3330,9 @@ private:
                         continue;
                     }
 
-                    bool is_blacklisted = false;
-                    for (const auto& bp : blacklist_) {
-                        if (std::hypot(goal_wx - bp.x, goal_wy - bp.y) < BLACKLIST_RADIUS) {
-                            is_blacklisted = true;
-                            break;
-                        }
-                    }
+                    const bool is_blacklisted = isBlacklistedPoint(goal_wx, goal_wy);
 
-                    if (is_blacklisted && !allow_backtrack) {
+                    if (is_blacklisted) {
                         continue;
                     }
 
@@ -3146,10 +3363,6 @@ private:
                     score -= (allow_backtrack ? 2.00 : 6.00) * backtrack_amount;
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
-
-                    if (is_blacklisted) {
-                        score -= 1.0;
-                    }
 
                     // 완전히 입구 쪽으로 되돌아가는 후보는 relaxed에서도 낮은 점수를 준다.
                     if (hasLeftEntrance() && distanceFromStart(goal_wx, goal_wy) < START_RETURN_GOAL_RADIUS) {
@@ -3202,9 +3415,249 @@ private:
         return true;
     }
 
+    bool pathViolatesNoReturnPolicy(
+        const nav_msgs::msg::Path& path,
+        std::string& reason) const
+    {
+        if (!hasLeftEntrance()) {
+            return false;
+        }
+
+        if (path.poses.empty()) {
+            reason = "empty global path";
+            return true;
+        }
+
+        const double current_projection = forwardProjection(robot_x_, robot_y_);
+        const double current_start_distance = distanceFromStart(robot_x_, robot_y_);
+
+        for (const auto& pose : path.poses) {
+            const double x = pose.pose.position.x;
+            const double y = pose.pose.position.y;
+            const double robot_distance = std::hypot(x - robot_x_, y - robot_y_);
+            const double projection = forwardProjection(x, y);
+            const double start_distance = distanceFromStart(x, y);
+
+            if (robot_distance < PATH_VALIDATION_IGNORE_NEAR_ROBOT) {
+                continue;
+            }
+
+            if (start_distance < NO_RETURN_MAP_BLOCK_RADIUS) {
+                reason = "path enters entrance return zone";
+                return true;
+            }
+
+            if (projection < START_LINE_MARGIN) {
+                reason = "path crosses behind start line";
+                return true;
+            }
+
+            if (projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+                current_projection) {
+                reason = "path backtracks toward entrance projection";
+                return true;
+            }
+
+            if (start_distance + NO_RETURN_GOAL_BACKTRACK_ALLOWANCE <
+                current_start_distance) {
+                reason = "path backtracks toward start distance";
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    void checkPathValidationTimeout()
+    {
+        if (!path_validation_in_progress_) {
+            return;
+        }
+
+        if ((this->now() - path_validation_started_).seconds() <= 1.20) {
+            return;
+        }
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "Nav2 path 사전검증 timeout. 해당 goal을 버리고 재탐색합니다: x=%.2f, y=%.2f",
+            pending_validated_goal_.pose.position.x,
+            pending_validated_goal_.pose.position.y
+        );
+
+        path_validation_in_progress_ = false;
+        active_path_validation_request_id_++;
+        consecutive_goal_failures_++;
+        addBlacklistPoint(
+            pending_validated_goal_.pose.position.x,
+            pending_validated_goal_.pose.position.y,
+            BLACKLIST_TTL_CANCEL
+        );
+        addPocketBlacklistForTarget(
+            pending_validated_goal_.pose.position.x,
+            pending_validated_goal_.pose.position.y,
+            "branch path validation timeout"
+        );
+
+        if (!startWideRayRecovery("branch path validation timeout")) {
+            startForwardCreep("branch path validation timeout");
+        }
+    }
+
+    bool requestPathValidatedGoal(
+        const geometry_msgs::msg::PoseStamped& goal_pose,
+        bool enforce_no_return)
+    {
+        if (path_validation_in_progress_ ||
+            goal_in_progress_ ||
+            canceling_goal_ ||
+            escape_active_) {
+            return false;
+        }
+
+        if (!path_client_->wait_for_action_server(std::chrono::milliseconds(250))) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "ComputePathToPose action server 대기 중입니다. 검증 없는 goal 전송은 하지 않습니다."
+            );
+            startForwardCreep("path validator unavailable");
+            return true;
+        }
+
+        pending_validated_goal_ = goal_pose;
+        pending_path_validation_enforce_no_return_ = enforce_no_return;
+        path_validation_in_progress_ = true;
+        path_validation_started_ = this->now();
+        active_path_validation_request_id_ = ++path_validation_request_id_;
+        const uint64_t request_id = active_path_validation_request_id_;
+
+        auto path_goal = ComputePathToPose::Goal();
+        path_goal.goal = goal_pose;
+        path_goal.use_start = false;
+
+        auto send_goal_options =
+            rclcpp_action::Client<ComputePathToPose>::SendGoalOptions();
+
+        send_goal_options.goal_response_callback =
+            [this, request_id](const GoalHandleComputePath::SharedPtr& goal_handle) {
+                if (request_id != active_path_validation_request_id_) {
+                    return;
+                }
+
+                if (!goal_handle) {
+                    RCLCPP_WARN(
+                        this->get_logger(),
+                        "ComputePathToPose가 goal을 거부했습니다. goal blacklist 후 재탐색"
+                    );
+                    path_validation_in_progress_ = false;
+                    consecutive_goal_failures_++;
+                    addBlacklistPoint(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        BLACKLIST_TTL_CANCEL
+                    );
+                    addPocketBlacklistForTarget(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        "branch path validation rejected"
+                    );
+                    if (!startWideRayRecovery("branch path validation rejected")) {
+                        startForwardCreep("branch path validation rejected");
+                    }
+                }
+            };
+
+        send_goal_options.result_callback =
+            [this, request_id](const GoalHandleComputePath::WrappedResult& result) {
+                if (request_id != active_path_validation_request_id_) {
+                    return;
+                }
+
+                path_validation_in_progress_ = false;
+
+                if (goal_in_progress_ || canceling_goal_ || escape_active_) {
+                    return;
+                }
+
+                if (result.code != rclcpp_action::ResultCode::SUCCEEDED ||
+                    !result.result) {
+                    RCLCPP_WARN(
+                        this->get_logger(),
+                        "Nav2 path 사전검증 실패. goal blacklist 후 재탐색: x=%.2f, y=%.2f",
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y
+                    );
+                    consecutive_goal_failures_++;
+                    addBlacklistPoint(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        BLACKLIST_TTL_CANCEL
+                    );
+                    addPocketBlacklistForTarget(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        "branch path validation failed"
+                    );
+                    if (!startWideRayRecovery("branch path validation failed")) {
+                        startForwardCreep("branch path validation failed");
+                    }
+                    return;
+                }
+
+                updateRobotPose();
+                updateForwardProgress();
+                if (latest_map_) {
+                    updateStartPathProgress(latest_map_);
+                }
+
+                std::string violation_reason;
+                if (pending_path_validation_enforce_no_return_ &&
+                    pathViolatesNoReturnPolicy(
+                        result.result->path,
+                        violation_reason)) {
+                    RCLCPP_WARN(
+                        this->get_logger(),
+                        "입구 방향 Nav2 path 차단: %s, goal=(%.2f, %.2f), path_poses=%zu",
+                        violation_reason.c_str(),
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        result.result->path.poses.size()
+                    );
+                    consecutive_goal_failures_++;
+                    addBlacklistPoint(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        BLACKLIST_TTL_CANCEL
+                    );
+                    addPocketBlacklistForTarget(
+                        pending_validated_goal_.pose.position.x,
+                        pending_validated_goal_.pose.position.y,
+                        "branch path violates no-return"
+                    );
+                    if (!startWideRayRecovery("branch path violates no-return")) {
+                        startForwardCreep("branch path violates no-return");
+                    }
+                    return;
+                }
+
+                RCLCPP_INFO(
+                    this->get_logger(),
+                    "Nav2 path 사전검증 통과: goal=(%.2f, %.2f), path_poses=%zu",
+                    pending_validated_goal_.pose.position.x,
+                    pending_validated_goal_.pose.position.y,
+                    result.result->path.poses.size()
+                );
+                sendGoal(pending_validated_goal_);
+            };
+
+        path_client_->async_send_goal(path_goal, send_goal_options);
+        return true;
+    }
+
     void sendGoal(const geometry_msgs::msg::PoseStamped& goal_pose)
     {
         if (!nav_client_->wait_for_action_server(std::chrono::seconds(1))) {
+            pending_goal_is_branch_escape_ = false;
             RCLCPP_WARN(this->get_logger(), "Nav2 action server 대기 중입니다. 다음 idle tick에서 재시도합니다.");
             return;
         }
@@ -3216,21 +3669,29 @@ private:
 
         auto goal_msg = NavigateToPose::Goal();
         goal_msg.pose = goal_pose;
+        active_nav_goal_request_id_ = ++nav_goal_request_id_;
+        const uint64_t request_id = active_nav_goal_request_id_;
 
         auto send_goal_options =
             rclcpp_action::Client<NavigateToPose>::SendGoalOptions();
 
         send_goal_options.goal_response_callback =
-            [this](const GoalHandleNav2::SharedPtr& goal_handle) {
+            [this, request_id](const GoalHandleNav2::SharedPtr& goal_handle) {
+                if (request_id != active_nav_goal_request_id_) {
+                    return;
+                }
+
                 if (!goal_handle) {
                     RCLCPP_WARN(
                         this->get_logger(),
-                        "Nav2가 목표를 거부했습니다. blacklist 초기화 후 재탐색"
+                        "Nav2가 목표를 거부했습니다. 실패 goal 주변을 금지하고 재탐색합니다"
                     );
 
-                    blacklist_.clear();
                     consecutive_goal_failures_++;
+                    addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
+                    addPocketBlacklist("Nav2 rejected goal");
                     goal_in_progress_ = false;
+                    current_goal_is_branch_escape_ = false;
                     active_goal_handle_.reset();
                     trySendNextGoal();
                     return;
@@ -3240,10 +3701,22 @@ private:
             };
 
         send_goal_options.result_callback =
-            std::bind(&MazeExplorer::resultCallback, this, _1);
+            [this, request_id](const GoalHandleNav2::WrappedResult& result) {
+                if (request_id != active_nav_goal_request_id_) {
+                    return;
+                }
+
+                resultCallback(result);
+            };
 
         goal_in_progress_ = true;
         canceling_goal_ = false;
+        current_goal_is_branch_escape_ = pending_goal_is_branch_escape_;
+        pending_goal_is_branch_escape_ = false;
+        if (current_goal_is_branch_escape_) {
+            branch_escape_commit_until_ =
+                this->now() + rclcpp::Duration::from_seconds(BRANCH_ESCAPE_COMMIT_DURATION);
+        }
         contact_oscillation_active_ = false;
         local_escape_spin_failures_ = 0;
         goal_start_x_ = robot_x_;
@@ -3261,6 +3734,11 @@ private:
 
     void idleRetryCallback()
     {
+        if (path_validation_in_progress_) {
+            checkPathValidationTimeout();
+            return;
+        }
+
         if (goal_in_progress_ || canceling_goal_ || escape_active_ || !latest_map_) {
             return;
         }
@@ -3294,12 +3772,19 @@ private:
 
         const double start_distance = distanceFromStart(robot_x_, robot_y_);
         const double projection = forwardProjection(robot_x_, robot_y_);
+        const bool branch_escape = isBranchEscapeCommitActive();
+        const double projection_allowance = branch_escape ?
+            BRANCH_ESCAPE_CANCEL_PROJECTION_ALLOWANCE :
+            NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE;
+        const double distance_allowance = branch_escape ?
+            BRANCH_ESCAPE_CANCEL_DISTANCE_ALLOWANCE :
+            NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE;
 
         if (hasLeftEntrance() &&
             (start_distance < START_RETURN_CANCEL_RADIUS ||
-             projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
+             projection + projection_allowance <
              max_forward_projection_ ||
-             start_distance + NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
+             start_distance + distance_allowance <
              max_start_distance_)) {
             RCLCPP_WARN(
                 this->get_logger(),
@@ -3366,6 +3851,10 @@ private:
 
     void resultCallback(const GoalHandleNav2::WrappedResult& result)
     {
+        if (!goal_in_progress_ && !canceling_goal_) {
+            return;
+        }
+
         updateRobotPose();
         updateForwardProgress();
         if (latest_map_) {
@@ -3398,6 +3887,7 @@ private:
 
                 consecutive_goal_failures_++;
                 addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
+                addPocketBlacklist("succeeded with almost no movement");
                 should_escape_after_result = canUseBackupRecovery();
                 should_contact_reverse_after_result =
                     nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
@@ -3419,6 +3909,7 @@ private:
         } else if (canceling_goal_) {
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
             consecutive_goal_failures_++;
+            addPocketBlacklist("stuck goal canceled");
             should_escape_after_result = canUseBackupRecovery();
             should_contact_reverse_after_result =
                 nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
@@ -3435,6 +3926,7 @@ private:
             consecutive_goal_failures_++;
             // 같은 실패 goal 반복만 짧게 막고, local fallback은 필요하면 blacklist를 무시한다.
             addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
+            addPocketBlacklist("Nav2 goal failed");
             should_escape_after_result = canUseBackupRecovery();
             should_contact_reverse_after_result =
                 nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
@@ -3445,6 +3937,7 @@ private:
         active_goal_handle_.reset();
         canceling_goal_ = false;
         goal_in_progress_ = false;
+        current_goal_is_branch_escape_ = false;
 
         processPendingContactRecovery();
         if (escape_active_) {
@@ -3456,6 +3949,11 @@ private:
             if (escape_active_) {
                 return;
             }
+        }
+
+        if (consecutive_goal_failures_ >= 2 &&
+            startWideRayRecovery(continue_reason + " repeated planner failure")) {
+            return;
         }
 
         if (should_escape_after_result) {
