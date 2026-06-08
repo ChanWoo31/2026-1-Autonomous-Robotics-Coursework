@@ -61,7 +61,7 @@ public:
             std::bind(&MazeExplorer::escapeTimerCallback, this)
         );
 
-        RCLCPP_INFO(this->get_logger(), "maze_explorer v13 fast-safe no-return progress loaded");
+        RCLCPP_INFO(this->get_logger(), "maze_explorer v12 no-return progress loaded");
     }
 
 private:
@@ -176,34 +176,34 @@ private:
     const double STUCK_TIMEOUT = 4.2;
     const double CONTACT_OSCILLATION_DISTANCE = 0.115;
     const double CONTACT_OSCILLATION_TIMEOUT = 0.80;
-    const double CONTACT_REVERSE_SPEED = 0.040;
+    const double CONTACT_REVERSE_SPEED = 0.035;
     const double CONTACT_REVERSE_DURATION = 0.45;
     const double CONTACT_REVERSE_REAR_CLEARANCE = 0.14;
-    const double CONTACT_WIDE_RAY_SPEED = 0.050;
+    const double CONTACT_WIDE_RAY_SPEED = 0.040;
     const double CONTACT_WIDE_RAY_DURATION = 0.65;
     const double CONTACT_WIDE_RAY_MIN_DISTANCE = 0.18;
     const double CONTACT_WIDE_RAY_MAX_DISTANCE = 0.75;
-    const double ESCAPE_BACKUP_SPEED = 0.045;
+    const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
     const int ESCAPE_BACKUP_MIN_FAILURES = 4;
-    const double FORWARD_CREEP_SPEED = 0.075;
+    const double FORWARD_CREEP_SPEED = 0.060;
     const double FORWARD_CREEP_DURATION = 0.70;
     const double FORWARD_CREEP_PROJECTION_CHECK_DISTANCE = 0.30;
-    const double FORWARD_CREEP_TURN_SPEED = 0.55;
+    const double FORWARD_CREEP_TURN_SPEED = 0.45;
     const double LOCAL_ESCAPE_RAY_MAX_DISTANCE = 0.85;
     const double LOCAL_ESCAPE_RAY_CLEARANCE = 0.060;
     const double LOCAL_ESCAPE_MIN_RAY_DISTANCE = 0.20;
     const double LOCAL_ESCAPE_MIN_SCAN_DISTANCE = 0.135;
     const double LOCAL_ESCAPE_SCAN_HALF_WIDTH = 0.22;
     const double LOCAL_ESCAPE_REVERSE_SCAN_DISTANCE = 0.16;
-    const double LOCAL_ESCAPE_REVERSE_SPEED = 0.040;
+    const double LOCAL_ESCAPE_REVERSE_SPEED = 0.035;
     const double LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE = 0.05;
     const double LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE = 0.16;
     const double LOCAL_ESCAPE_FORWARD_RAY_DISTANCE = 0.30;
     const double LOCAL_ESCAPE_STEP_DISTANCE = 0.45;
     const double LOCAL_ESCAPE_ALIGN_YAW = 0.35;
-    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 0.75;
+    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 0.65;
     const int LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE = 2;
     const double BRANCH_ESCAPE_MIN_PATH_DISTANCE = 0.70;
     const double BRANCH_ESCAPE_MAX_PATH_DISTANCE = 2.40;
@@ -1202,7 +1202,7 @@ private:
         geometry_msgs::msg::PoseStamped next_goal;
         bool allow_branch_escape_goal = false;
 
-        // v13 핵심:
+        // v12 핵심:
         // - 출발 직후에는 frontier가 안정적으로 생기기 전이라 local lookahead로 먼저 전진시킨다.
         // - 어느 정도 입구에서 벗어나면 progress-frontier를 우선해서 막다른 포켓을 피한다.
         // - 실패가 반복되면 relaxed frontier와 escape goal을 허용한다.
@@ -1254,12 +1254,12 @@ private:
         if (!found_goal) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "v13: 보낼 수 있는 frontier/local goal이 없습니다. 멈추지 않고 전진 크리프를 시도합니다."
+                "v12: 보낼 수 있는 frontier/local goal이 없습니다. 멈추지 않고 전진 크리프를 시도합니다."
             );
             if (canUseBackupRecovery()) {
-                startEscapeRecovery("no reachable v13 goal");
+                startEscapeRecovery("no reachable v12 goal");
             } else {
-                startForwardCreep("no reachable v13 goal");
+                startForwardCreep("no reachable v12 goal");
             }
             return true;
         }
@@ -3255,7 +3255,7 @@ private:
 
         RCLCPP_INFO(
             this->get_logger(),
-            "v13 frontier goal: x=%.2f, y=%.2f, score=%.2f, start_path=%.2f, current_path=%.2f, bottleneck=%.2f, cluster=%d, relaxed=%d",
+            "v12 frontier goal: x=%.2f, y=%.2f, score=%.2f, start_path=%.2f, current_path=%.2f, bottleneck=%.2f, cluster=%d, relaxed=%d",
             current_goal_x_,
             current_goal_y_,
             best_score,

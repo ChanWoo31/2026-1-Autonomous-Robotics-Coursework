@@ -17,19 +17,19 @@ public:
     safe_cmd_topic_ = this->declare_parameter<std::string>("safe_cmd_topic", "/cmd_vel");
     scan_topic_ = this->declare_parameter<std::string>("scan_topic", "/scan");
 
-    max_linear_ = this->declare_parameter<double>("max_linear", 0.13);
+    max_linear_ = this->declare_parameter<double>("max_linear", 0.12);
     max_reverse_ = this->declare_parameter<double>("max_reverse", 0.06);
-    max_angular_ = this->declare_parameter<double>("max_angular", 1.25);
+    max_angular_ = this->declare_parameter<double>("max_angular", 1.20);
 
     // 사용자는 base_link -> laser yaw를 3.14159로 주고 있음.
     // 따라서 LaserScan raw frame 기준 로봇 정면은 보통 0도가 아니라 pi 근처다.
     // 만약 필터가 계속 이상하게 막으면 실행 시 front_angle_offset:=0.0으로 바꿔서 비교한다.
     front_angle_offset_ = this->declare_parameter<double>("front_angle_offset", 3.14159);
 
-    front_stop_ = this->declare_parameter<double>("front_stop", 0.090);
-    front_slow_ = this->declare_parameter<double>("front_slow", 0.245);
-    side_stop_ = this->declare_parameter<double>("side_stop", 0.080);
-    side_slow_ = this->declare_parameter<double>("side_slow", 0.145);
+    front_stop_ = this->declare_parameter<double>("front_stop", 0.070);
+    front_slow_ = this->declare_parameter<double>("front_slow", 0.180);
+    side_stop_ = this->declare_parameter<double>("side_stop", 0.075);
+    side_slow_ = this->declare_parameter<double>("side_slow", 0.110);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
     wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 24.0);
     corner_angle_deg_ = this->declare_parameter<double>("corner_angle_deg", 38.0);
@@ -38,8 +38,8 @@ public:
     side_half_width_deg_ = this->declare_parameter<double>("side_half_width_deg", 12.0);
     side_turn_stop_ = this->declare_parameter<double>("side_turn_stop", 0.075);
     side_turn_slow_ = this->declare_parameter<double>("side_turn_slow", 0.125);
-    corner_stop_ = this->declare_parameter<double>("corner_stop", 0.100);
-    corner_slow_ = this->declare_parameter<double>("corner_slow", 0.185);
+    corner_stop_ = this->declare_parameter<double>("corner_stop", 0.085);
+    corner_slow_ = this->declare_parameter<double>("corner_slow", 0.145);
     side_linear_stop_ = this->declare_parameter<double>("side_linear_stop", 0.055);
     side_linear_slow_ = this->declare_parameter<double>("side_linear_slow", 0.095);
     side_imbalance_allowance_ = this->declare_parameter<double>("side_imbalance_allowance", 0.030);
@@ -77,7 +77,7 @@ public:
 
     RCLCPP_WARN(
       this->get_logger(),
-      "cmd_vel_safety_filter_v13_fast_safe loaded: %s -> %s, scan=%s, front_offset=%.3f rad",
+      "cmd_vel_safety_filter_v11_hybrid loaded: %s -> %s, scan=%s, front_offset=%.3f rad",
       nav_cmd_topic_.c_str(), safe_cmd_topic_.c_str(), scan_topic_.c_str(), front_angle_offset_);
   }
 
@@ -393,7 +393,7 @@ private:
       this->get_logger(),
       *this->get_clock(),
       1000,
-      "v13 fast-safe filter: front=(%.3f, %.3f), corner=(%.3f, %.3f), side=(%.3f, %.3f), in=(%.3f, %.3f), out=(%.3f, %.3f)",
+      "v11 hybrid filter: front=(%.3f, %.3f), corner=(%.3f, %.3f), side=(%.3f, %.3f), in=(%.3f, %.3f), out=(%.3f, %.3f)",
       front_narrow,
       front_wide,
       left_corner,

@@ -12,7 +12,7 @@ package.xml에 없으면 추가:
 launch 파일에 safety node 추가:
 
 Node(
-    package='final_test_6_pkg',
+    package='final_test_7_pkg',
     executable='cmd_vel_safety_filter_v9',
     name='cmd_vel_safety_filter',
     output='screen',
@@ -20,12 +20,11 @@ Node(
 )
 
 중요:
-final_test_6_pkg의 현재 구조는 Nav2/maze_explorer 출력이 /cmd_vel_nav로 들어오고,
+final_test_7_pkg의 현재 구조는 Nav2/maze_explorer 출력이 /cmd_vel_nav로 들어오고,
 safety filter가 검사한 뒤 최종 로봇 구동 토픽 /cmd_vel로 내보내는 방식이다.
 
-final_test_6 빠른-안전 프로필:
-TEB 목표 전진속도는 0.15 m/s, safety filter 최종 전진 상한은 0.13 m/s다.
-전방/코너 감속 시작 거리를 final_test_5보다 넓혀, 증속 시에도 좁은 통로에서 일찍 감속한다.
+final_test_7_pkg에서는 cmd_vel_safety_filter 노드에 nav2_params 파일을 직접 전달한다.
+따라서 config/nav2_params_corridor_v9_safety.yaml의 cmd_vel_safety_filter 값이 실제 실행에 반영된다.
 
 따라서 turtlebot3_node 또는 diff_drive_controller는 그대로 /cmd_vel을 받으면 된다.
 대신 Nav2 쪽 최종 cmd_vel 출력은 /cmd_vel_nav로 맞춰야 safety filter가 중간에 들어간다.

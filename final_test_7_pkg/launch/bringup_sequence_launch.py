@@ -4,12 +4,9 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
 from launch.actions import IncludeLaunchDescription
 from launch.actions import TimerAction
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
@@ -18,10 +15,7 @@ def delayed(delay_seconds, action):
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration("use_sim_time")
-    use_rviz = LaunchConfiguration("use_rviz")
-
-    pkg_share = get_package_share_directory("final_test_6_pkg")
+    pkg_share = get_package_share_directory("final_test_7_pkg")
     mapper_params = os.path.join(
         pkg_share,
         "config",
@@ -61,7 +55,6 @@ def generate_launch_description():
         ),
         launch_arguments={
             "slam_params_file": mapper_params,
-            "use_sim_time": use_sim_time,
         }.items(),
     )
 
@@ -75,12 +68,11 @@ def generate_launch_description():
         ),
         launch_arguments={
             "params_file": nav2_params,
-            "use_sim_time": use_sim_time,
         }.items(),
     )
 
     safety_filter = Node(
-        package="final_test_6_pkg",
+        package="final_test_7_pkg",
         executable="cmd_vel_safety_filter_v9",
         name="cmd_vel_safety_filter",
         parameters=[nav2_params],
@@ -88,7 +80,7 @@ def generate_launch_description():
     )
 
     maze_explorer = Node(
-        package="final_test_6_pkg",
+        package="final_test_7_pkg",
         executable="maze_explorer",
         name="maze_explorer",
         output="screen",
@@ -96,20 +88,9 @@ def generate_launch_description():
 
     rviz = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(rviz_launch),
-        condition=IfCondition(use_rviz),
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument(
-            "use_sim_time",
-            default_value="false",
-            description="Use simulation/Gazebo clock instead of system time.",
-        ),
-        DeclareLaunchArgument(
-            "use_rviz",
-            default_value="true",
-            description="Start RViz with the navigation view.",
-        ),
         static_laser_tf,
         delayed(1.0, slam_toolbox),
         delayed(4.0, nav2),
