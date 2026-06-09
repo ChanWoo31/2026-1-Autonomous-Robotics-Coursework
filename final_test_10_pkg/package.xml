@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>final_test_5_pkg</name>
+  <name>final_test_10_pkg</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="cwcw0301@gmail.com">han</maintainer>
@@ -24,6 +24,9 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>nav2_rviz_plugins</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_mppi_controller</exec_depend>
+  <exec_depend>slam_toolbox</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

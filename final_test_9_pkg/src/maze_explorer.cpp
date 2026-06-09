@@ -61,7 +61,7 @@ public:
             std::bind(&MazeExplorer::escapeTimerCallback, this)
         );
 
-        RCLCPP_INFO(this->get_logger(), "maze_explorer v13 fast-safe no-return progress loaded");
+        RCLCPP_INFO(this->get_logger(), "maze_explorer v13 final_test_9 dead-end memory loaded");
     }
 
 private:
@@ -93,7 +93,6 @@ private:
     double robot_yaw_ = 0.0;
 
     double best_goal_distance_ = std::numeric_limits<double>::max();
-    double best_goal_path_gain_ = 0.0;
     rclcpp::Time last_progress_time_;
 
     double start_x_ = 0.0;
@@ -102,8 +101,6 @@ private:
     double max_forward_projection_ = 0.0;
     double max_start_distance_ = 0.0;
     double max_start_path_distance_ = 0.0;
-    double max_start_path_x_ = 0.0;
-    double max_start_path_y_ = 0.0;
     double current_start_path_distance_ = 0.0;
     bool is_start_position_saved_ = false;
 
@@ -111,66 +108,43 @@ private:
     {
         double x;
         double y;
-        double radius;
         rclcpp::Time expires_at;
     };
 
-    struct BranchMemoryEntry
+    struct DeadEndZone
     {
-        double origin_x;
-        double origin_y;
-        double dir_x;
-        double dir_y;
-        double length;
-        double half_width;
-        rclcpp::Time expires_at;
+        double x;
+        double y;
+        double start_path_distance;
+        double projection;
     };
 
     std::vector<BlacklistEntry> blacklist_;
-    std::vector<BranchMemoryEntry> blocked_branches_;
+    std::vector<DeadEndZone> dead_end_zones_;
 
-    const double BLACKLIST_RADIUS_SUCCESS = 0.12;
-    const double BLACKLIST_RADIUS_FAILURE = 0.48;
-    const double BLACKLIST_RADIUS_CANCEL = 0.50;
-    const double BLACKLIST_TTL_SUCCESS = 4.0;
-    const double BLACKLIST_TTL_FAILURE = 20.0;
-    const double BLACKLIST_TTL_CANCEL = 16.0;
-    const double BRANCH_MEMORY_TTL_FAILURE = 60.0;
-    const double BRANCH_MEMORY_TTL_CANCEL = 45.0;
-    const double BRANCH_MEMORY_MIN_LENGTH = 0.28;
-    const double BRANCH_MEMORY_EXTRA_LENGTH = 0.85;
-    const double BRANCH_MEMORY_MAX_LENGTH = 3.00;
-    const double BRANCH_MEMORY_HALF_WIDTH = 0.36;
-    const double BRANCH_MEMORY_START_IGNORE = 0.14;
-    const double BRANCH_MEMORY_SCORE_PENALTY = 80.0;
-    const double POCKET_BRANCH_MEMORY_TTL = 70.0;
-    const double POCKET_BRANCH_MIN_PATH_LOSS = 0.32;
-    const double POCKET_BRANCH_MIN_WORLD_DISTANCE = 0.24;
-    const double POCKET_BRANCH_EXTRA_LENGTH = 0.95;
-    const double POCKET_BRANCH_HALF_WIDTH = 0.42;
-    const double POCKET_BRANCH_DUPLICATE_RADIUS = 0.35;
-    const double ESCAPE_DIRECTION_LOCK_TTL = 8.5;
-    const double ESCAPE_DIRECTION_LOCK_MIN_DISTANCE = 0.18;
-    const double ESCAPE_DIRECTION_LOCK_MIN_ALIGNMENT = 0.45;
-    const double ESCAPE_DIRECTION_LOCK_BACKTRACK_ALLOWANCE = 0.12;
-    const double ESCAPE_DIRECTION_LOCK_RELEASE_PATH_GAIN = 0.45;
-    const double ESCAPE_DIRECTION_LOCK_BONUS = 1.8;
-    const double ESCAPE_DIRECTION_LOCK_PENALTY = 5.5;
+    const double BLACKLIST_RADIUS = 0.22;
+    const double BLACKLIST_TTL_SUCCESS = 6.0;
+    const double BLACKLIST_TTL_FAILURE = 30.0;
+    const double BLACKLIST_TTL_CANCEL = 25.0;
+    const double DEAD_END_HARD_RADIUS = 0.32;
+    const double DEAD_END_BRANCH_RADIUS = 0.90;
+    const double DEAD_END_PATH_ALLOWANCE = 0.55;
+    const double DEAD_END_PROJECTION_ALLOWANCE = 0.35;
 
     const double GOAL_CLEARANCE = 0.100;
-    const double PATH_CLEARANCE = 0.085;
-    const double PATH_BOTTLENECK_CLEARANCE = 0.100;
+    const double PATH_CLEARANCE = 0.080;
+    const double PATH_BOTTLENECK_CLEARANCE = 0.090;
     const double GOAL_STANDOFF = 0.28;
     const double GOAL_SEARCH_RADIUS = 0.32;
-    const double PREFERRED_GOAL_CLEARANCE = 0.16;
+    const double PREFERRED_GOAL_CLEARANCE = 0.18;
     const double PATH_BOTTLENECK_WEIGHT = 2.2;
     const double FRONTIER_CLUSTER_LENGTH_WEIGHT = 0.2;
-    const double WALL_CLEARANCE_COMFORT = 0.14;
-    const double WALL_CLEARANCE_PENALTY_WEIGHT = 7.0;
+    const double WALL_CLEARANCE_COMFORT = 0.16;
+    const double WALL_CLEARANCE_PENALTY_WEIGHT = 9.0;
 
     const double MIN_GOAL_DISTANCE = 0.35;
     const double MIN_FINAL_GOAL_DISTANCE = 0.35;
-    const double MIN_FINAL_GOAL_CLEARANCE = 0.102;
+    const double MIN_FINAL_GOAL_CLEARANCE = 0.100;
 
     const double START_LINE_MARGIN = 0.20;
     const double START_DIRECTION_WEIGHT = 1.1;
@@ -195,63 +169,60 @@ private:
     const double KEEP_MOVING_MAX_DISTANCE = 1.20;
     const double KEEP_MOVING_MIN_EUCLIDEAN_DISTANCE = 0.32;
     const double KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE = 0.22;
-    const double KEEP_MOVING_MIN_CLEARANCE = 0.105;
-    const double KEEP_MOVING_RELAXED_CLEARANCE = 0.095;
-    const double KEEP_MOVING_MIN_BOTTLENECK = 0.105;
-    const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.095;
-    const double KEEP_MOVING_BLACKLIST_RADIUS = 0.08;
+    const double KEEP_MOVING_MIN_CLEARANCE = 0.100;
+    const double KEEP_MOVING_RELAXED_CLEARANCE = 0.085;
+    const double KEEP_MOVING_MIN_BOTTLENECK = 0.090;
+    const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.075;
+    const double KEEP_MOVING_BLACKLIST_RADIUS = 0.16;
     const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.25;
     const double OPEN_SPACE_RADIUS = 0.40;
     const double OPEN_SPACE_MIN_RATIO = 0.40;
     const double FORWARD_ALIGNMENT_WEIGHT = 1.20;
-    const double MIN_ROBOT_FORWARD_GOAL_ALIGNMENT = -0.12;
     const double OPEN_SPACE_WEIGHT = 1.80;
     const double OPEN_RAY_MAX_DISTANCE = 1.10;
     const double OPEN_RAY_LINE_CLEARANCE = 0.085;
-    const double OPEN_RAY_GOAL_CLEARANCE = 0.102;
-    const double LOOKAHEAD_PIVOT_CLEARANCE = 0.085;
-    const double LOOKAHEAD_GOAL_CLEARANCE = 0.102;
+    const double OPEN_RAY_GOAL_CLEARANCE = 0.100;
+    const double LOOKAHEAD_PIVOT_CLEARANCE = 0.075;
+    const double LOOKAHEAD_GOAL_CLEARANCE = 0.100;
 
     const double STUCK_GOAL_IMPROVEMENT = 0.03;
     const double STUCK_TIMEOUT = 4.2;
     const double CONTACT_OSCILLATION_DISTANCE = 0.115;
     const double CONTACT_OSCILLATION_TIMEOUT = 0.80;
-    const double CONTACT_REVERSE_SPEED = 0.040;
+    const double CONTACT_REVERSE_SPEED = 0.035;
     const double CONTACT_REVERSE_DURATION = 0.45;
     const double CONTACT_REVERSE_REAR_CLEARANCE = 0.14;
-    const double CONTACT_WIDE_RAY_SPEED = 0.050;
+    const double CONTACT_WIDE_RAY_SPEED = 0.040;
     const double CONTACT_WIDE_RAY_DURATION = 0.65;
     const double CONTACT_WIDE_RAY_MIN_DISTANCE = 0.18;
     const double CONTACT_WIDE_RAY_MAX_DISTANCE = 0.75;
-    const double ESCAPE_BACKUP_SPEED = 0.045;
+    const double ESCAPE_BACKUP_SPEED = 0.040;
     const double ESCAPE_BACKUP_DURATION = 0.40;
     const double ESCAPE_BACKUP_MIN_START_DISTANCE = 0.80;
     const int ESCAPE_BACKUP_MIN_FAILURES = 4;
-    const double FORWARD_CREEP_SPEED = 0.075;
+    const double FORWARD_CREEP_SPEED = 0.060;
     const double FORWARD_CREEP_DURATION = 0.70;
     const double FORWARD_CREEP_PROJECTION_CHECK_DISTANCE = 0.30;
-    const double FORWARD_CREEP_TURN_SPEED = 0.65;
+    const double FORWARD_CREEP_TURN_SPEED = 0.45;
     const double LOCAL_ESCAPE_RAY_MAX_DISTANCE = 0.85;
     const double LOCAL_ESCAPE_RAY_CLEARANCE = 0.060;
     const double LOCAL_ESCAPE_MIN_RAY_DISTANCE = 0.20;
     const double LOCAL_ESCAPE_MIN_SCAN_DISTANCE = 0.135;
     const double LOCAL_ESCAPE_SCAN_HALF_WIDTH = 0.22;
     const double LOCAL_ESCAPE_REVERSE_SCAN_DISTANCE = 0.16;
-    const double LOCAL_ESCAPE_REVERSE_SPEED = 0.040;
+    const double LOCAL_ESCAPE_REVERSE_SPEED = 0.035;
     const double LOCAL_ESCAPE_REVERSE_PROJECTION_ALLOWANCE = 0.05;
     const double LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE = 0.16;
     const double LOCAL_ESCAPE_FORWARD_RAY_DISTANCE = 0.30;
-    const double LOCAL_ESCAPE_SCAN_ONLY_CREEP_CLEARANCE = 0.24;
-    const double LOCAL_ESCAPE_SCAN_ONLY_CREEP_SPEED = 0.030;
     const double LOCAL_ESCAPE_STEP_DISTANCE = 0.45;
     const double LOCAL_ESCAPE_ALIGN_YAW = 0.35;
-    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 0.90;
+    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 0.65;
     const int LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE = 2;
     const double BRANCH_ESCAPE_MIN_PATH_DISTANCE = 0.70;
     const double BRANCH_ESCAPE_MAX_PATH_DISTANCE = 2.40;
     const double BRANCH_ESCAPE_MAX_START_PATH_LOSS = 1.40;
     const double BRANCH_ESCAPE_MIN_CLEARANCE = 0.085;
-    const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.080;
+    const double BRANCH_ESCAPE_MIN_BOTTLENECK = 0.075;
 
     const double ESCAPE_MIN_DISTANCE = 0.22;
     const double ESCAPE_MAX_DISTANCE = 0.55;
@@ -260,22 +231,6 @@ private:
 
     const int MIN_FRONTIER_CLUSTER_SIZE = 6;
     const int MAX_FRONTIER_CANDIDATES_PER_CLUSTER = 48;
-
-    // Dead-end escape mode:
-    // 막힌 포켓 안쪽에서 frontier를 다시 찍는 것을 막고,
-    // 일정 시간 동안 포켓에서 빠져나오는 goal만 우선 선택한다.
-    const double DEAD_END_ESCAPE_TTL = 12.0;
-    const double DEAD_END_ESCAPE_FRONT_BLOCKED = 0.34;
-    const double DEAD_END_ESCAPE_MIN_START_PATH = 0.80;
-    const double DEAD_END_ESCAPE_RELEASE_PATH_LOSS = 0.45;
-    const double DEAD_END_ESCAPE_RELEASE_PATH_GAIN = 0.45;
-    const double DEAD_END_ESCAPE_ENTRANCE_RADIUS = 0.75;
-    const double DEAD_END_EXIT_MIN_PATH_DISTANCE = 0.38;
-    const double DEAD_END_EXIT_MAX_PATH_DISTANCE = 1.65;
-    const double DEAD_END_EXIT_MIN_START_PATH_LOSS = 0.18;
-    const double DEAD_END_EXIT_MAX_START_PATH_LOSS = 1.35;
-    const double DEAD_END_EXIT_MIN_CLEARANCE = 0.080;
-    const double DEAD_END_EXIT_MIN_BOTTLENECK = 0.075;
 
     double current_goal_x_ = 0.0;
     double current_goal_y_ = 0.0;
@@ -290,18 +245,6 @@ private:
     std::string pending_contact_recovery_reason_;
     rclcpp::Time pending_contact_recovery_since_;
     int local_escape_spin_failures_ = 0;
-    bool has_last_pocket_branch_memory_ = false;
-    double last_pocket_branch_x_ = 0.0;
-    double last_pocket_branch_y_ = 0.0;
-    rclcpp::Time last_pocket_branch_memory_time_;
-    bool escape_direction_lock_active_ = false;
-    double escape_direction_lock_dir_x_ = 0.0;
-    double escape_direction_lock_dir_y_ = 0.0;
-    double escape_direction_lock_start_path_distance_ = 0.0;
-    rclcpp::Time escape_direction_lock_until_;
-    bool dead_end_escape_mode_ = false;
-    rclcpp::Time dead_end_escape_until_;
-    double dead_end_escape_start_path_distance_ = 0.0;
     bool start_metrics_cache_valid_ = false;
     int64_t cached_start_map_stamp_ns_ = 0;
     uint32_t cached_start_map_width_ = 0;
@@ -325,7 +268,7 @@ private:
         updateStartPathProgress(msg);
 
         if (goal_in_progress_) {
-            if (!isDeadEndEscapeModeActive() && isBacktrackingTowardEntrance()) {
+            if (isBacktrackingTowardEntrance()) {
                 RCLCPP_WARN(
                     this->get_logger(),
                     "시작점 방향 되감기 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
@@ -392,8 +335,6 @@ private:
             max_forward_projection_ = 0.0;
             max_start_distance_ = 0.0;
             max_start_path_distance_ = 0.0;
-            max_start_path_x_ = robot_x_;
-            max_start_path_y_ = robot_y_;
             current_start_path_distance_ = 0.0;
             start_metrics_cache_valid_ = false;
             is_start_position_saved_ = true;
@@ -506,27 +447,6 @@ private:
         return ((dx / distance) * forward_x) + ((dy / distance) * forward_y);
     }
 
-    double robotHeadingAlignment(double wx, double wy) const
-    {
-        const double dx = wx - robot_x_;
-        const double dy = wy - robot_y_;
-        const double distance = std::hypot(dx, dy);
-
-        if (distance < 1e-6) {
-            return 1.0;
-        }
-
-        const double forward_x = std::cos(robot_yaw_);
-        const double forward_y = std::sin(robot_yaw_);
-
-        return ((dx / distance) * forward_x) + ((dy / distance) * forward_y);
-    }
-
-    bool isBehindRobotGoal(double wx, double wy) const
-    {
-        return robotHeadingAlignment(wx, wy) < MIN_ROBOT_FORWARD_GOAL_ALIGNMENT;
-    }
-
     void updateForwardProgress()
     {
         if (!is_start_position_saved_) {
@@ -563,53 +483,25 @@ private:
             blacklist_.end());
     }
 
-    void pruneExpiredBranchMemory()
-    {
-        const rclcpp::Time now = this->now();
-
-        blocked_branches_.erase(
-            std::remove_if(
-                blocked_branches_.begin(),
-                blocked_branches_.end(),
-                [&](const BranchMemoryEntry& entry) {
-                    return entry.expires_at <= now;
-                }),
-            blocked_branches_.end());
-    }
-
     void addBlacklistPoint(double wx, double wy, double ttl_seconds)
-    {
-        double radius = BLACKLIST_RADIUS_SUCCESS;
-
-        if (std::abs(ttl_seconds - BLACKLIST_TTL_FAILURE) < 0.01) {
-            radius = BLACKLIST_RADIUS_FAILURE;
-        } else if (std::abs(ttl_seconds - BLACKLIST_TTL_CANCEL) < 0.01) {
-            radius = BLACKLIST_RADIUS_CANCEL;
-        }
-
-        addBlacklistPoint(wx, wy, ttl_seconds, radius);
-    }
-
-    void addBlacklistPoint(double wx, double wy, double ttl_seconds, double radius)
     {
         pruneExpiredBlacklist();
 
         blacklist_.push_back({
             wx,
             wy,
-            radius,
             this->now() + rclcpp::Duration::from_seconds(ttl_seconds)
         });
 
-        if (blacklist_.size() > 24) {
-            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 6);
+        if (blacklist_.size() > 32) {
+            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 8);
         }
     }
 
-    bool isBlacklisted(double wx, double wy) const
+    bool isBlacklistedPoint(double wx, double wy, double radius) const
     {
         for (const auto& bp : blacklist_) {
-            if (std::hypot(wx - bp.x, wy - bp.y) < bp.radius) {
+            if (std::hypot(wx - bp.x, wy - bp.y) < radius) {
                 return true;
             }
         }
@@ -617,353 +509,139 @@ private:
         return false;
     }
 
-    void addBlockedBranch(
-        double origin_x,
-        double origin_y,
-        double dir_x,
-        double dir_y,
-        double length,
-        double half_width,
-        double ttl_seconds,
-        const std::string& reason)
-    {
-        const double dir_norm = std::hypot(dir_x, dir_y);
-
-        if (dir_norm < 1e-6 || length < BRANCH_MEMORY_MIN_LENGTH) {
-            return;
-        }
-
-        pruneExpiredBranchMemory();
-
-        BranchMemoryEntry entry;
-        entry.origin_x = origin_x;
-        entry.origin_y = origin_y;
-        entry.dir_x = dir_x / dir_norm;
-        entry.dir_y = dir_y / dir_norm;
-        entry.length = std::min(BRANCH_MEMORY_MAX_LENGTH, length);
-        entry.half_width = half_width;
-        entry.expires_at = this->now() + rclcpp::Duration::from_seconds(ttl_seconds);
-
-        blocked_branches_.push_back(entry);
-
-        if (blocked_branches_.size() > 12) {
-            blocked_branches_.erase(blocked_branches_.begin(), blocked_branches_.begin() + 3);
-        }
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "막힌 브랜치 기억: origin=(%.2f, %.2f), dir=(%.2f, %.2f), len=%.2f, width=%.2f, reason=%s",
-            entry.origin_x,
-            entry.origin_y,
-            entry.dir_x,
-            entry.dir_y,
-            entry.length,
-            entry.half_width,
-            reason.c_str());
-    }
-
-    void rememberBlockedBranch(double ttl_seconds, const std::string& reason)
-    {
-        const double dx = current_goal_x_ - goal_start_x_;
-        const double dy = current_goal_y_ - goal_start_y_;
-        const double attempt_length = std::hypot(dx, dy);
-
-        if (attempt_length < BRANCH_MEMORY_MIN_LENGTH) {
-            return;
-        }
-
-        addBlockedBranch(
-            goal_start_x_,
-            goal_start_y_,
-            dx,
-            dy,
-            attempt_length + BRANCH_MEMORY_EXTRA_LENGTH,
-            BRANCH_MEMORY_HALF_WIDTH,
-            ttl_seconds,
-            reason);
-    }
-
-    bool branchMemoryHit(double wx, double wy) const
-    {
-        for (const auto& branch : blocked_branches_) {
-            const double vx = wx - branch.origin_x;
-            const double vy = wy - branch.origin_y;
-            const double along = vx * branch.dir_x + vy * branch.dir_y;
-
-            if (along < BRANCH_MEMORY_START_IGNORE || along > branch.length) {
-                continue;
-            }
-
-            const double lateral = std::abs(vx * branch.dir_y - vy * branch.dir_x);
-            if (lateral < branch.half_width) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    double branchMemoryPenalty(double wx, double wy) const
-    {
-        return branchMemoryHit(wx, wy) ? BRANCH_MEMORY_SCORE_PENALTY : 0.0;
-    }
-
-    void rememberPocketBranchIfNeeded(const std::string& reason)
-    {
-        const double path_loss =
-            max_start_path_distance_ - current_start_path_distance_;
-
-        if (path_loss < POCKET_BRANCH_MIN_PATH_LOSS) {
-            return;
-        }
-
-        const double dx = max_start_path_x_ - robot_x_;
-        const double dy = max_start_path_y_ - robot_y_;
-        const double branch_distance = std::hypot(dx, dy);
-
-        if (branch_distance < POCKET_BRANCH_MIN_WORLD_DISTANCE) {
-            return;
-        }
-
-        if (has_last_pocket_branch_memory_ &&
-            (this->now() - last_pocket_branch_memory_time_).seconds() <
-            POCKET_BRANCH_MEMORY_TTL &&
-            std::hypot(
-                max_start_path_x_ - last_pocket_branch_x_,
-                max_start_path_y_ - last_pocket_branch_y_) <
-            POCKET_BRANCH_DUPLICATE_RADIUS) {
-            return;
-        }
-
-        addBlockedBranch(
-            robot_x_,
-            robot_y_,
-            dx,
-            dy,
-            branch_distance + POCKET_BRANCH_EXTRA_LENGTH,
-            POCKET_BRANCH_HALF_WIDTH,
-            POCKET_BRANCH_MEMORY_TTL,
-            reason);
-
-        has_last_pocket_branch_memory_ = true;
-        last_pocket_branch_x_ = max_start_path_x_;
-        last_pocket_branch_y_ = max_start_path_y_;
-        last_pocket_branch_memory_time_ = this->now();
-    }
-
-    void clearExpiredEscapeDirectionLock()
-    {
-        if (!escape_direction_lock_active_) {
-            return;
-        }
-
-        const bool expired = this->now() >= escape_direction_lock_until_;
-        const bool committed_far_enough =
-            current_start_path_distance_ >=
-            escape_direction_lock_start_path_distance_ +
-            ESCAPE_DIRECTION_LOCK_RELEASE_PATH_GAIN;
-
-        if (expired || committed_far_enough) {
-            escape_direction_lock_active_ = false;
-        }
-    }
-
-    bool isEscapeDirectionCommitActive()
-    {
-        clearExpiredEscapeDirectionLock();
-        return escape_direction_lock_active_;
-    }
-
-    bool escapeDirectionLockAllows(
+    bool getStartPathDistanceForPoint(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
         double wx,
         double wy,
-        double candidate_start_path_distance =
-            std::numeric_limits<double>::quiet_NaN())
+        double& start_path_distance)
     {
-        clearExpiredEscapeDirectionLock();
+        const std::vector<int>* start_distances = nullptr;
+        const std::vector<double>* start_bottleneck_clearances = nullptr;
 
-        if (!escape_direction_lock_active_) {
-            return true;
-        }
-
-        const double dx = wx - robot_x_;
-        const double dy = wy - robot_y_;
-        const double distance = std::hypot(dx, dy);
-
-        if (distance < ESCAPE_DIRECTION_LOCK_MIN_DISTANCE) {
-            return true;
-        }
-
-        const double alignment =
-            ((dx / distance) * escape_direction_lock_dir_x_) +
-            ((dy / distance) * escape_direction_lock_dir_y_);
-
-        if (alignment < ESCAPE_DIRECTION_LOCK_MIN_ALIGNMENT) {
+        if (!getStartReachableMetrics(
+                map,
+                start_distances,
+                start_bottleneck_clearances)) {
             return false;
         }
 
-        if (std::isfinite(candidate_start_path_distance) &&
-            candidate_start_path_distance +
-            ESCAPE_DIRECTION_LOCK_BACKTRACK_ALLOWANCE <
-            current_start_path_distance_) {
+        int mx = 0;
+        int my = 0;
+
+        if (!worldToMap(map, wx, wy, mx, my)) {
             return false;
+        }
+
+        const int index = my * static_cast<int>(map->info.width) + mx;
+
+        if ((*start_distances)[index] < 0) {
+            return false;
+        }
+
+        start_path_distance = (*start_distances)[index] * map->info.resolution;
+        return true;
+    }
+
+    void addDeadEndZone(double wx, double wy, const std::string& reason)
+    {
+        if (!latest_map_) {
+            return;
+        }
+
+        double start_path_distance = 0.0;
+
+        if (!getStartPathDistanceForPoint(
+                latest_map_,
+                wx,
+                wy,
+                start_path_distance)) {
+            start_path_distance = current_start_path_distance_;
         }
 
         const double projection = forwardProjection(wx, wy);
-        const double current_projection = forwardProjection(robot_x_, robot_y_);
 
-        if (projection + ESCAPE_DIRECTION_LOCK_BACKTRACK_ALLOWANCE <
-            current_projection) {
-            return false;
+        for (auto& zone : dead_end_zones_) {
+            if (std::hypot(wx - zone.x, wy - zone.y) < DEAD_END_HARD_RADIUS) {
+                zone.x = wx;
+                zone.y = wy;
+                zone.start_path_distance = std::max(
+                    zone.start_path_distance,
+                    start_path_distance
+                );
+                zone.projection = std::max(zone.projection, projection);
+                return;
+            }
         }
 
-        return true;
-    }
+        dead_end_zones_.push_back({
+            wx,
+            wy,
+            start_path_distance,
+            projection
+        });
 
-    double escapeDirectionLockCost(double wx, double wy)
-    {
-        clearExpiredEscapeDirectionLock();
-
-        if (!escape_direction_lock_active_) {
-            return 0.0;
+        if (dead_end_zones_.size() > 40) {
+            dead_end_zones_.erase(dead_end_zones_.begin(), dead_end_zones_.begin() + 8);
         }
-
-        const double dx = wx - robot_x_;
-        const double dy = wy - robot_y_;
-        const double distance = std::hypot(dx, dy);
-
-        if (distance < ESCAPE_DIRECTION_LOCK_MIN_DISTANCE) {
-            return 0.0;
-        }
-
-        const double alignment =
-            ((dx / distance) * escape_direction_lock_dir_x_) +
-            ((dy / distance) * escape_direction_lock_dir_y_);
-
-        if (alignment >= 0.65) {
-            return -ESCAPE_DIRECTION_LOCK_BONUS * alignment;
-        }
-
-        return ESCAPE_DIRECTION_LOCK_PENALTY * (0.65 - alignment);
-    }
-
-    void armEscapeDirectionLock(
-        const geometry_msgs::msg::PoseStamped& goal_pose,
-        const std::string& reason)
-    {
-        const double dx = goal_pose.pose.position.x - robot_x_;
-        const double dy = goal_pose.pose.position.y - robot_y_;
-        const double distance = std::hypot(dx, dy);
-
-        if (distance < ESCAPE_DIRECTION_LOCK_MIN_DISTANCE) {
-            return;
-        }
-
-        escape_direction_lock_active_ = true;
-        escape_direction_lock_dir_x_ = dx / distance;
-        escape_direction_lock_dir_y_ = dy / distance;
-        escape_direction_lock_start_path_distance_ = current_start_path_distance_;
-        escape_direction_lock_until_ =
-            this->now() + rclcpp::Duration::from_seconds(ESCAPE_DIRECTION_LOCK_TTL);
 
         RCLCPP_WARN(
             this->get_logger(),
-            "탈출 방향 잠금: dir=(%.2f, %.2f), %.1fs 유지, reason=%s",
-            escape_direction_lock_dir_x_,
-            escape_direction_lock_dir_y_,
-            ESCAPE_DIRECTION_LOCK_TTL,
-            reason.c_str());
-    }
-
-    void armDeadEndEscapeMode(const std::string& reason)
-    {
-        if (!hasLeftEntrance()) {
-            return;
-        }
-
-        dead_end_escape_mode_ = true;
-        dead_end_escape_start_path_distance_ = current_start_path_distance_;
-        dead_end_escape_until_ =
-            this->now() + rclcpp::Duration::from_seconds(DEAD_END_ESCAPE_TTL);
-
-        // 이전에 앞쪽으로 잠긴 탈출 방향이 있으면 dead-end 탈출 goal 선택을 방해할 수 있으므로 해제한다.
-        escape_direction_lock_active_ = false;
-        rememberPocketBranchIfNeeded(reason);
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "dead-end 탈출 모드 ON: %.1fs 유지, start_path=%.2f, reason=%s",
-            DEAD_END_ESCAPE_TTL,
-            dead_end_escape_start_path_distance_,
-            reason.c_str());
-    }
-
-    bool isDeadEndEscapeModeActive()
-    {
-        if (!dead_end_escape_mode_) {
-            return false;
-        }
-
-        const bool expired = this->now() >= dead_end_escape_until_;
-
-        // dead-end에서 빠져나올 때는 보통 시작점 기준 path 거리가 감소한다.
-        const bool backed_out_enough =
-            current_start_path_distance_ + DEAD_END_ESCAPE_RELEASE_PATH_LOSS <=
-            dead_end_escape_start_path_distance_;
-
-        // 예외적으로 더 열린 곳으로 전진하면서 빠져나가는 경우도 허용한다.
-        const bool progressed_elsewhere =
-            current_start_path_distance_ >=
-            dead_end_escape_start_path_distance_ + DEAD_END_ESCAPE_RELEASE_PATH_GAIN;
-
-        const bool near_entrance =
-            distanceFromStart(robot_x_, robot_y_) < DEAD_END_ESCAPE_ENTRANCE_RADIUS;
-
-        if (expired || backed_out_enough || progressed_elsewhere || near_entrance) {
-            dead_end_escape_mode_ = false;
-
-            RCLCPP_WARN(
-                this->get_logger(),
-                "dead-end 탈출 모드 OFF: expired=%d, backed_out=%d, progressed=%d, near_entrance=%d",
-                expired ? 1 : 0,
-                backed_out_enough ? 1 : 0,
-                progressed_elsewhere ? 1 : 0,
-                near_entrance ? 1 : 0);
-
-            return false;
-        }
-
-        return true;
-    }
-
-    bool isForwardBlockedForDeadEnd() const
-    {
-        const double front = scanSectorMin(
-            0.0,
-            0.30
+            "dead-end zone 등록: x=%.2f, y=%.2f, start_path=%.2f, projection=%.2f, reason=%s",
+            wx,
+            wy,
+            start_path_distance,
+            projection,
+            reason.c_str()
         );
-
-        return std::isfinite(front) &&
-               front < DEAD_END_ESCAPE_FRONT_BLOCKED &&
-               current_start_path_distance_ > DEAD_END_ESCAPE_MIN_START_PATH;
     }
 
-    bool shouldPrioritizeDeadEndEscape()
+    bool isDeadEndCandidate(
+        double wx,
+        double wy,
+        double start_path_distance) const
     {
-        if (!hasLeftEntrance()) {
-            return false;
-        }
+        const double projection = forwardProjection(wx, wy);
 
-        if (isDeadEndEscapeModeActive()) {
-            return true;
-        }
+        for (const auto& zone : dead_end_zones_) {
+            const double spatial_distance = std::hypot(wx - zone.x, wy - zone.y);
 
-        if (consecutive_goal_failures_ > 0) {
-            armDeadEndEscapeMode("goal failure");
-            return true;
+            if (spatial_distance < DEAD_END_HARD_RADIUS) {
+                return true;
+            }
+
+            if (spatial_distance < DEAD_END_BRANCH_RADIUS &&
+                start_path_distance + DEAD_END_PATH_ALLOWANCE >=
+                    zone.start_path_distance &&
+                projection + DEAD_END_PROJECTION_ALLOWANCE >= zone.projection) {
+                return true;
+            }
         }
 
         return false;
+    }
+
+    bool isDeadEndCandidate(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double wx,
+        double wy)
+    {
+        double start_path_distance = 0.0;
+
+        if (!getStartPathDistanceForPoint(
+                map,
+                wx,
+                wy,
+                start_path_distance)) {
+            for (const auto& zone : dead_end_zones_) {
+                if (std::hypot(wx - zone.x, wy - zone.y) < DEAD_END_HARD_RADIUS) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        return isDeadEndCandidate(wx, wy, start_path_distance);
     }
 
     bool hasLeftEntrance() const
@@ -1658,12 +1336,10 @@ private:
         }
 
         current_start_path_distance_ = (*start_distances)[robot_index] * resolution;
-
-        if (current_start_path_distance_ > max_start_path_distance_) {
-            max_start_path_distance_ = current_start_path_distance_;
-            max_start_path_x_ = robot_x_;
-            max_start_path_y_ = robot_y_;
-        }
+        max_start_path_distance_ = std::max(
+            max_start_path_distance_,
+            current_start_path_distance_
+        );
 
         return true;
     }
@@ -1681,65 +1357,22 @@ private:
         updateForwardProgress();
         updateStartPathProgress(latest_map_);
         pruneExpiredBlacklist();
-        pruneExpiredBranchMemory();
-        clearExpiredEscapeDirectionLock();
-
-        if (consecutive_goal_failures_ > 0) {
-            rememberPocketBranchIfNeeded("post-failure pocket revisit");
-        }
 
         geometry_msgs::msg::PoseStamped next_goal;
         bool allow_branch_escape_goal = false;
 
-        // v14 핵심:
-        // - dead-end 탈출 모드에서는 frontier/keepMoving보다 포켓 출구 goal을 우선한다.
-        // - U자 탈출 경로가 한 번 잡히면 일정 시간 동안 다시 안쪽 frontier로 덮어쓰지 않는다.
-        // - dead-end가 아닐 때만 기존 frontier 탐색을 수행한다.
+        // v13 핵심:
+        // - 출발 직후에는 frontier가 안정적으로 생기기 전이라 local lookahead로 먼저 전진시킨다.
+        // - 어느 정도 입구에서 벗어나면 progress-frontier를 우선해서 막다른 포켓을 피한다.
+        // - 실패가 반복되면 relaxed frontier와 escape goal을 허용한다.
         bool found_goal = false;
-        const bool commit_active = isEscapeDirectionCommitActive();
-        const bool dead_end_escape_priority = shouldPrioritizeDeadEndEscape();
 
         const bool early_start =
             max_start_distance_ < 0.60 &&
             current_start_path_distance_ < 0.60 &&
             consecutive_goal_failures_ == 0;
 
-        if (dead_end_escape_priority) {
-            found_goal = makeBranchEscapeGoal(latest_map_, next_goal) ||
-                         makeDeadEndExitGoal(latest_map_, next_goal);
-            allow_branch_escape_goal = found_goal;
-
-            if (found_goal) {
-                armEscapeDirectionLock(next_goal, "dead-end escape priority");
-            } else {
-                RCLCPP_WARN(
-                    this->get_logger(),
-                    "dead-end 탈출 goal 생성 실패. frontier로 되돌아가지 않고 local recovery를 수행합니다."
-                );
-                if (canUseBackupRecovery()) {
-                    startEscapeRecovery("dead-end escape goal unavailable");
-                } else {
-                    startForwardCreep("dead-end escape goal unavailable");
-                }
-                return true;
-            }
-        }
-
-        if (!found_goal && commit_active) {
-            if (hasLeftEntrance()) {
-                found_goal = makeBranchEscapeGoal(latest_map_, next_goal) ||
-                             makeDeadEndExitGoal(latest_map_, next_goal);
-                allow_branch_escape_goal = found_goal;
-            }
-
-            if (!found_goal) {
-                found_goal = makeKeepMovingGoal(latest_map_, next_goal) ||
-                             makeOpenRayGoal(latest_map_, next_goal) ||
-                             makeLookaheadTurnGoal(latest_map_, next_goal);
-            }
-        }
-
-        if (!found_goal && early_start) {
+        if (early_start) {
             found_goal = makeLookaheadTurnGoal(latest_map_, next_goal) ||
                          makeOpenRayGoal(latest_map_, next_goal) ||
                          makeKeepMovingGoal(latest_map_, next_goal);
@@ -1790,27 +1423,6 @@ private:
             return true;
         }
 
-        if (isBehindRobotGoal(
-                next_goal.pose.position.x,
-                next_goal.pose.position.y)) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "로봇 뒤쪽 goal 차단: goal=(%.2f, %.2f), align=%.2f",
-                next_goal.pose.position.x,
-                next_goal.pose.position.y,
-                robotHeadingAlignment(
-                    next_goal.pose.position.x,
-                    next_goal.pose.position.y)
-            );
-            addBlacklistPoint(
-                next_goal.pose.position.x,
-                next_goal.pose.position.y,
-                BLACKLIST_TTL_CANCEL
-            );
-            startForwardCreep("behind-robot goal blocked");
-            return true;
-        }
-
         if (!allow_branch_escape_goal &&
             violatesNoReturnPolicy(
                 latest_map_,
@@ -1845,12 +1457,6 @@ private:
             return true;
         }
 
-        if (consecutive_goal_failures_ > 0 && !branchMemoryHit(
-                next_goal.pose.position.x,
-                next_goal.pose.position.y)) {
-            armEscapeDirectionLock(next_goal, "post-failure selected route");
-        }
-
         sendGoal(next_goal);
         return true;
     }
@@ -1863,6 +1469,15 @@ private:
 
         geometry_msgs::msg::Twist stop;
         escape_cmd_pub_->publish(stop);
+
+        if (hasLeftEntrance()) {
+            RCLCPP_WARN(
+                this->get_logger(),
+                "입구 복귀 방지를 위해 후진 복구를 생략합니다. reason=%s",
+                reason.c_str()
+            );
+            return;
+        }
 
         escape_active_ = true;
         escape_until_ = this->now() + rclcpp::Duration::from_seconds(ESCAPE_BACKUP_DURATION);
@@ -1956,18 +1571,6 @@ private:
             const double wy = robot_y_ + step_distance * std::sin(yaw);
             const double projected_next = forwardProjection(wx, wy);
 
-            if (isBehindRobotGoal(wx, wy)) {
-                continue;
-            }
-
-            if (branchMemoryHit(wx, wy)) {
-                continue;
-            }
-
-            if (!escapeDirectionLockAllows(wx, wy)) {
-                continue;
-            }
-
             if (hasLeftEntrance() &&
                 (isInEntranceReturnZone(wx, wy) || projected_next < START_LINE_MARGIN)) {
                 continue;
@@ -1980,7 +1583,6 @@ private:
             score += 1.40 * std::min(scan_clearance, CONTACT_WIDE_RAY_MAX_DISTANCE);
             score -= 0.45 * std::abs(offset);
             score -= 0.90 * projection_loss;
-            score -= escapeDirectionLockCost(wx, wy);
 
             if (!found_direction || score > best_score) {
                 found_direction = true;
@@ -2011,13 +1613,6 @@ private:
             -LOCAL_ESCAPE_MAX_TURN_SPEED,
             LOCAL_ESCAPE_MAX_TURN_SPEED
         );
-
-        escape_direction_lock_active_ = true;
-        escape_direction_lock_dir_x_ = std::cos(best_yaw);
-        escape_direction_lock_dir_y_ = std::sin(best_yaw);
-        escape_direction_lock_start_path_distance_ = current_start_path_distance_;
-        escape_direction_lock_until_ =
-            this->now() + rclcpp::Duration::from_seconds(ESCAPE_DIRECTION_LOCK_TTL);
 
         geometry_msgs::msg::Twist stop;
         escape_cmd_pub_->publish(stop);
@@ -2196,31 +1791,21 @@ private:
                 LOCAL_ESCAPE_RAY_MAX_DISTANCE,
                 LOCAL_ESCAPE_RAY_CLEARANCE
             );
-            const double forward_x =
-                robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_);
-            const double forward_y =
-                robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_);
-            const double forward_projection = forwardProjection(forward_x, forward_y);
+            const double forward_projection = forwardProjection(
+                robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(robot_yaw_),
+                robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(robot_yaw_)
+            );
             const bool forward_keeps_progress =
                 !hasLeftEntrance() ||
                 forward_projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE >=
                 current_projection;
-            const bool forward_matches_lock =
-                escapeDirectionLockAllows(forward_x, forward_y);
 
             if (front_scan_clearance >= LOCAL_ESCAPE_FORWARD_SCAN_DISTANCE &&
                 front_ray_distance >= LOCAL_ESCAPE_FORWARD_RAY_DISTANCE &&
-                forward_keeps_progress &&
-                forward_matches_lock) {
+                forward_keeps_progress) {
                 local_escape_spin_failures_ = 0;
                 recovery_linear_speed_ = FORWARD_CREEP_SPEED;
                 recovery_angular_speed_ = 0.0;
-                escape_direction_lock_active_ = true;
-                escape_direction_lock_dir_x_ = std::cos(robot_yaw_);
-                escape_direction_lock_dir_y_ = std::sin(robot_yaw_);
-                escape_direction_lock_start_path_distance_ = current_start_path_distance_;
-                escape_direction_lock_until_ =
-                    this->now() + rclcpp::Duration::from_seconds(ESCAPE_DIRECTION_LOCK_TTL);
                 escape_active_ = true;
                 escape_until_ = this->now() + rclcpp::Duration::from_seconds(FORWARD_CREEP_DURATION);
 
@@ -2254,16 +1839,10 @@ private:
                 robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(yaw),
                 robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(yaw)
             );
-            const double scan_step_x =
-                robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(yaw);
-            const double scan_step_y =
-                robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(yaw);
             double scan_only_score = 0.0;
             scan_only_score += scan_clearance;
             scan_only_score += 0.35 * (scan_step_projection - current_projection);
             scan_only_score -= 0.08 * std::abs(offset);
-            scan_only_score -= escapeDirectionLockCost(scan_step_x, scan_step_y);
-            scan_only_score -= branchMemoryPenalty(scan_step_x, scan_step_y);
 
             if (scan_only_score > best_scan_only_score) {
                 best_scan_only_score = scan_only_score;
@@ -2295,18 +1874,6 @@ private:
             const double wy = robot_y_ + step_distance * std::sin(yaw);
             const double projected_next = forwardProjection(wx, wy);
 
-            if (isBehindRobotGoal(wx, wy)) {
-                continue;
-            }
-
-            if (branchMemoryHit(wx, wy)) {
-                continue;
-            }
-
-            if (!escapeDirectionLockAllows(wx, wy)) {
-                continue;
-            }
-
             if (hasLeftEntrance() &&
                 projected_next + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
                 current_projection) {
@@ -2324,7 +1891,6 @@ private:
             score += 1.20 * std::min(scan_clearance, LOCAL_ESCAPE_RAY_MAX_DISTANCE);
             score += 1.60 * (projected_next - current_projection);
             score -= 0.35 * std::abs(offset);
-            score -= escapeDirectionLockCost(wx, wy);
 
             if (!found_direction || score > best_score) {
                 found_direction = true;
@@ -2345,6 +1911,11 @@ private:
         } else {
             local_escape_spin_failures_ = 0;
         }
+
+        const double yaw_error = std::atan2(
+            std::sin(best_yaw - robot_yaw_),
+            std::cos(best_yaw - robot_yaw_)
+        );
 
         if (!found_direction &&
             local_escape_spin_failures_ >= LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE) {
@@ -2396,25 +1967,6 @@ private:
             }
         }
 
-        const bool force_scan_only_creep =
-            !found_direction &&
-            scan_ready &&
-            local_escape_spin_failures_ >= LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE &&
-            best_scan_only_clearance >= LOCAL_ESCAPE_SCAN_ONLY_CREEP_CLEARANCE;
-
-        if (force_scan_only_creep) {
-            best_yaw = best_scan_only_yaw;
-            best_scan_clearance = best_scan_only_clearance;
-            best_projected_next = forwardProjection(
-                robot_x_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::cos(best_yaw),
-                robot_y_ + FORWARD_CREEP_PROJECTION_CHECK_DISTANCE * std::sin(best_yaw));
-        }
-
-        const double yaw_error = std::atan2(
-            std::sin(best_yaw - robot_yaw_),
-            std::cos(best_yaw - robot_yaw_)
-        );
-
         recovery_linear_speed_ = FORWARD_CREEP_SPEED;
         recovery_angular_speed_ = std::clamp(
             1.20 * yaw_error,
@@ -2422,22 +1974,17 @@ private:
             LOCAL_ESCAPE_MAX_TURN_SPEED
         );
 
-        if (force_scan_only_creep) {
-            recovery_linear_speed_ = LOCAL_ESCAPE_SCAN_ONLY_CREEP_SPEED;
-            if (std::abs(yaw_error) > LOCAL_ESCAPE_ALIGN_YAW) {
-                recovery_linear_speed_ *= 0.50;
-            }
-        } else if (!found_direction) {
+        if (!found_direction) {
             recovery_linear_speed_ = 0.0;
         } else if (std::abs(yaw_error) > LOCAL_ESCAPE_ALIGN_YAW) {
             recovery_linear_speed_ = FORWARD_CREEP_SPEED * 0.45;
         }
 
-        if (!found_direction && !force_scan_only_creep && std::abs(recovery_angular_speed_) < 0.05) {
+        if (!found_direction && std::abs(recovery_angular_speed_) < 0.05) {
             recovery_angular_speed_ = FORWARD_CREEP_TURN_SPEED;
         }
 
-        if (!found_direction && !force_scan_only_creep && scan_ready) {
+        if (!found_direction && scan_ready) {
             const double rear_clearance = scanSectorMin(
                 3.14159265358979323846,
                 LOCAL_ESCAPE_SCAN_HALF_WIDTH
@@ -2458,15 +2005,6 @@ private:
                 best_scan_clearance = rear_clearance;
                 best_projected_next = reverse_projection;
             }
-        }
-
-        if (recovery_linear_speed_ > 0.0) {
-            escape_direction_lock_active_ = true;
-            escape_direction_lock_dir_x_ = std::cos(best_yaw);
-            escape_direction_lock_dir_y_ = std::sin(best_yaw);
-            escape_direction_lock_start_path_distance_ = current_start_path_distance_;
-            escape_direction_lock_until_ =
-                this->now() + rclcpp::Duration::from_seconds(ESCAPE_DIRECTION_LOCK_TTL);
         }
 
         escape_active_ = true;
@@ -2523,8 +2061,7 @@ private:
     void cancelCurrentGoalAndBlacklist()
     {
         addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_CANCEL);
-        rememberPocketBranchIfNeeded("goal canceled after pocket backtrack");
-        rememberBlockedBranch(BRANCH_MEMORY_TTL_CANCEL, "goal canceled");
+        addDeadEndZone(current_goal_x_, current_goal_y_, "goal canceled or backtracking");
         canceling_goal_ = true;
 
         geometry_msgs::msg::Twist stop;
@@ -2702,11 +2239,8 @@ private:
                     const double wx = pivot_x + goal_distance * std::cos(second_yaw);
                     const double wy = pivot_y + goal_distance * std::sin(second_yaw);
 
-                    if (isBehindRobotGoal(wx, wy)) {
-                        continue;
-                    }
-
-                    if (branchMemoryHit(wx, wy)) {
+                    if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS) ||
+                        isDeadEndCandidate(map, wx, wy)) {
                         continue;
                     }
 
@@ -2721,10 +2255,6 @@ private:
                     }
 
                     if (isInEntranceReturnZone(wx, wy)) {
-                        continue;
-                    }
-
-                    if (!escapeDirectionLockAllows(wx, wy)) {
                         continue;
                     }
 
@@ -2764,8 +2294,6 @@ private:
                     score -= 0.75 * projection;
                     score += 0.45 * std::abs(first_offset);
                     score += 0.20 * turn_amount;
-                    score += branchMemoryPenalty(wx, wy);
-                    score += escapeDirectionLockCost(wx, wy);
 
                     // A useful bend should beat a straight ray into a pocket.
                     if (turn_amount > pi / 5.0 && branch_distance > 0.55) {
@@ -2874,19 +2402,12 @@ private:
                 const double wx = robot_x_ + distance * std::cos(yaw);
                 const double wy = robot_y_ + distance * std::sin(yaw);
 
-                if (isBehindRobotGoal(wx, wy)) {
-                    continue;
-                }
-
-                if (branchMemoryHit(wx, wy)) {
+                if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS) ||
+                    isDeadEndCandidate(map, wx, wy)) {
                     continue;
                 }
 
                 if (isInEntranceReturnZone(wx, wy)) {
-                    continue;
-                }
-
-                if (!escapeDirectionLockAllows(wx, wy)) {
                     continue;
                 }
 
@@ -2927,8 +2448,6 @@ private:
                 score -= 1.20 * clearance;
                 score -= 0.80 * open_ratio;
                 score -= 0.70 * projection;
-                score += branchMemoryPenalty(wx, wy);
-                score += escapeDirectionLockCost(wx, wy);
 
                 if (!found || score < best_score) {
                     found = true;
@@ -2997,16 +2516,15 @@ private:
         const int height = static_cast<int>(map->info.height);
         const double resolution = map->info.resolution;
         const double current_projection = forwardProjection(robot_x_, robot_y_);
-        const bool commit_active = isEscapeDirectionCommitActive();
         const bool short_fallback = consecutive_goal_failures_ >= 2;
-        const double target_step = (short_fallback || commit_active) ? 0.45 : 0.85;
-        const double min_step = (short_fallback || commit_active) ? 0.20 : KEEP_MOVING_MIN_DISTANCE;
-        const double max_step = commit_active ? 0.62 : (short_fallback ? 0.75 : KEEP_MOVING_MAX_DISTANCE);
-        const double min_euclidean_step = (short_fallback || commit_active) ?
+        const double target_step = short_fallback ? 0.45 : 0.85;
+        const double min_step = short_fallback ? 0.20 : KEEP_MOVING_MIN_DISTANCE;
+        const double max_step = short_fallback ? 0.75 : KEEP_MOVING_MAX_DISTANCE;
+        const double min_euclidean_step = short_fallback ?
             KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE :
             KEEP_MOVING_MIN_EUCLIDEAN_DISTANCE;
 
-        auto selectGoal = [&](bool relaxed, bool ignore_blacklist, int& best_mx, int& best_my,
+        auto selectGoal = [&](bool relaxed, int& best_mx, int& best_my,
                               double& best_score, double& best_path_distance,
                               double& best_start_path_distance, double& best_projection,
                               double& best_bottleneck) -> bool {
@@ -3043,14 +2561,6 @@ private:
                         continue;
                     }
 
-                    if (isBehindRobotGoal(wx, wy)) {
-                        continue;
-                    }
-
-                    if (branchMemoryHit(wx, wy)) {
-                        continue;
-                    }
-
                     if (isInEntranceReturnZone(wx, wy)) {
                         continue;
                     }
@@ -3069,10 +2579,6 @@ private:
                     }
 
                     const double start_path_distance = (*start_distances)[index] * resolution;
-
-                    if (!escapeDirectionLockAllows(wx, wy, start_path_distance)) {
-                        continue;
-                    }
 
                     if (isEntranceReturnForbiddenCandidate(
                             wx,
@@ -3101,7 +2607,8 @@ private:
                         continue;
                     }
 
-                    if (!ignore_blacklist && isBlacklisted(wx, wy)) {
+                    if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS) ||
+                        isDeadEndCandidate(wx, wy, start_path_distance)) {
                         continue;
                     }
 
@@ -3129,8 +2636,6 @@ private:
                     score += WALL_CLEARANCE_PENALTY_WEIGHT *
                              std::max(0.0, WALL_CLEARANCE_COMFORT - bottleneck);
                     score += 4.0 * std::max(0.0, OPEN_SPACE_MIN_RATIO - open_ratio);
-                    score += branchMemoryPenalty(wx, wy);
-                    score += escapeDirectionLockCost(wx, wy);
 
                     // Nav2 global planner가 통로를 막힌 곳으로 판단하지 않게
                     // 좁은 병목 후보는 keep-moving goal에서 강하게 밀어낸다.
@@ -3166,7 +2671,6 @@ private:
 
         bool found = selectGoal(
             false,
-            false,
             best_mx,
             best_my,
             best_score,
@@ -3179,21 +2683,6 @@ private:
         if (!found) {
             found = selectGoal(
                 true,
-                false,
-                best_mx,
-                best_my,
-                best_score,
-                best_path_distance,
-                best_start_path_distance,
-                best_projection,
-                best_bottleneck
-            );
-        }
-
-        if (!found) {
-            found = selectGoal(
-                true,
-                false,
                 best_mx,
                 best_my,
                 best_score,
@@ -3272,187 +2761,6 @@ private:
         return true;
     }
 
-    bool makeDeadEndExitGoal(
-        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
-        geometry_msgs::msg::PoseStamped& goal)
-    {
-        std::vector<int> reachable_distances;
-        std::vector<double> reachable_bottleneck_clearances;
-        const std::vector<int>* start_distances = nullptr;
-        const std::vector<double>* start_bottleneck_clearances = nullptr;
-
-        if (!computeReachableMetricsFrom(
-                map,
-                robot_x_,
-                robot_y_,
-                false,
-                reachable_distances,
-                reachable_bottleneck_clearances)) {
-            return false;
-        }
-
-        if (!getStartReachableMetrics(
-                map,
-                start_distances,
-                start_bottleneck_clearances)) {
-            return false;
-        }
-
-        const int width = static_cast<int>(map->info.width);
-        const int height = static_cast<int>(map->info.height);
-        const double resolution = map->info.resolution;
-        const double current_projection = forwardProjection(robot_x_, robot_y_);
-
-        bool found = false;
-        double best_score = -std::numeric_limits<double>::max();
-        int best_mx = 0;
-        int best_my = 0;
-        double best_path_distance = 0.0;
-        double best_start_path_distance = 0.0;
-        double best_start_path_loss = 0.0;
-        double best_clearance = 0.0;
-        double best_bottleneck = 0.0;
-        double best_open_ratio = 0.0;
-        double best_projection = 0.0;
-
-        for (int my = 1; my < height - 1; ++my) {
-            for (int mx = 1; mx < width - 1; ++mx) {
-                const int index = my * width + mx;
-
-                if (map->data[index] != 0 ||
-                    reachable_distances[index] < 0 ||
-                    (*start_distances)[index] < 0) {
-                    continue;
-                }
-
-                const double path_distance = reachable_distances[index] * resolution;
-
-                if (path_distance < DEAD_END_EXIT_MIN_PATH_DISTANCE ||
-                    path_distance > DEAD_END_EXIT_MAX_PATH_DISTANCE) {
-                    continue;
-                }
-
-                const double start_path_distance = (*start_distances)[index] * resolution;
-                const double start_path_loss = current_start_path_distance_ - start_path_distance;
-
-                // dead-end 탈출 goal은 현재보다 시작점 기준 path 거리가 줄어드는 지점이어야 한다.
-                if (start_path_loss < DEAD_END_EXIT_MIN_START_PATH_LOSS ||
-                    start_path_loss > DEAD_END_EXIT_MAX_START_PATH_LOSS) {
-                    continue;
-                }
-
-                const double wx = mapToWorldX(map, mx);
-                const double wy = mapToWorldY(map, my);
-
-                if (isBehindRobotGoal(wx, wy)) {
-                    continue;
-                }
-
-                if (branchMemoryHit(wx, wy)) {
-                    continue;
-                }
-
-                if (isInEntranceReturnZone(wx, wy) ||
-                    distanceFromStart(wx, wy) < ENTRANCE_NO_RETURN_WORLD_RADIUS ||
-                    start_path_distance < ENTRANCE_NO_RETURN_PATH_DISTANCE) {
-                    continue;
-                }
-
-                const double projection = forwardProjection(wx, wy);
-
-                if (projection < START_LINE_MARGIN) {
-                    continue;
-                }
-
-                const double bottleneck = reachable_bottleneck_clearances[index];
-
-                if (bottleneck < DEAD_END_EXIT_MIN_BOTTLENECK) {
-                    continue;
-                }
-
-                const double clearance = nearestObstacleDistance(map, mx, my, 0.30);
-
-                if (clearance < DEAD_END_EXIT_MIN_CLEARANCE) {
-                    continue;
-                }
-
-                const double open_ratio = openSpaceRatio(map, mx, my, OPEN_SPACE_RADIUS);
-                const double angle = std::atan2(wy - robot_y_, wx - robot_x_);
-                const double angle_diff = std::abs(std::atan2(
-                    std::sin(angle - robot_yaw_),
-                    std::cos(angle - robot_yaw_)
-                ));
-                const double target_path_distance = 0.85;
-                const double path_error = std::abs(path_distance - target_path_distance);
-                const double projection_loss = std::max(0.0, current_projection - projection);
-
-                double score = 0.0;
-                score += 3.20 * std::min(start_path_loss, 0.90);
-                score += 2.20 * clearance;
-                score += 1.80 * bottleneck;
-                score += 1.20 * open_ratio;
-                score -= 0.80 * path_error;
-                score -= 0.45 * angle_diff;
-                score -= 0.30 * projection_loss;
-                score -= WALL_CLEARANCE_PENALTY_WEIGHT *
-                         std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
-                score -= WALL_CLEARANCE_PENALTY_WEIGHT *
-                         std::max(0.0, WALL_CLEARANCE_COMFORT - bottleneck);
-
-                // 실패한 goal 자체로 다시 찍는 것만 약하게 억제한다.
-                if (isBlacklisted(wx, wy)) {
-                    score -= 1.50;
-                }
-
-                if (!found || score > best_score) {
-                    found = true;
-                    best_score = score;
-                    best_mx = mx;
-                    best_my = my;
-                    best_path_distance = path_distance;
-                    best_start_path_distance = start_path_distance;
-                    best_start_path_loss = start_path_loss;
-                    best_clearance = clearance;
-                    best_bottleneck = bottleneck;
-                    best_open_ratio = open_ratio;
-                    best_projection = projection;
-                }
-            }
-        }
-
-        if (!found) {
-            return false;
-        }
-
-        goal.header.frame_id = "map";
-        goal.header.stamp = this->now();
-        goal.pose.position.x = mapToWorldX(map, best_mx);
-        goal.pose.position.y = mapToWorldY(map, best_my);
-        goal.pose.orientation.x = 0.0;
-        goal.pose.orientation.y = 0.0;
-        goal.pose.orientation.z = std::sin(robot_yaw_ * 0.5);
-        goal.pose.orientation.w = std::cos(robot_yaw_ * 0.5);
-
-        current_goal_x_ = goal.pose.position.x;
-        current_goal_y_ = goal.pose.position.y;
-
-        RCLCPP_WARN(
-            this->get_logger(),
-            "dead-end 출구 goal: x=%.2f, y=%.2f, score=%.2f, path=%.2f, start_path=%.2f, loss=%.2f, proj=%.2f, clearance=%.2f, bottleneck=%.2f, open=%.2f",
-            current_goal_x_,
-            current_goal_y_,
-            best_score,
-            best_path_distance,
-            best_start_path_distance,
-            best_start_path_loss,
-            best_projection,
-            best_clearance,
-            best_bottleneck,
-            best_open_ratio);
-
-        return true;
-    }
-
     bool makeBranchEscapeGoal(
         const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
         geometry_msgs::msg::PoseStamped& goal)
@@ -3515,15 +2823,7 @@ private:
                 const double wx = mapToWorldX(map, mx);
                 const double wy = mapToWorldY(map, my);
 
-                if (isBehindRobotGoal(wx, wy)) {
-                    continue;
-                }
-
-                if (branchMemoryHit(wx, wy)) {
-                    continue;
-                }
-
-                if (isBlacklisted(wx, wy)) {
+                if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS)) {
                     continue;
                 }
 
@@ -3534,7 +2834,7 @@ private:
 
                 const double start_path_distance = (*start_distances)[index] * resolution;
 
-                if (!escapeDirectionLockAllows(wx, wy, start_path_distance)) {
+                if (isDeadEndCandidate(wx, wy, start_path_distance)) {
                     continue;
                 }
 
@@ -3586,8 +2886,6 @@ private:
                 score -= 1.30 * projection_loss;
                 score -= 0.80 * start_path_loss;
                 score -= 0.25 * angle_diff;
-                score -= branchMemoryPenalty(wx, wy);
-                score -= escapeDirectionLockCost(wx, wy);
 
                 if (!found || score > best_score) {
                     found = true;
@@ -3681,14 +2979,6 @@ private:
                 const double wx = robot_x_ + distance * std::cos(yaw);
                 const double wy = robot_y_ + distance * std::sin(yaw);
 
-                if (isBehindRobotGoal(wx, wy)) {
-                    continue;
-                }
-
-                if (branchMemoryHit(wx, wy)) {
-                    continue;
-                }
-
                 int mx = 0;
                 int my = 0;
 
@@ -3703,10 +2993,6 @@ private:
                 }
 
                 if (isInEntranceReturnZone(wx, wy)) {
-                    continue;
-                }
-
-                if (!escapeDirectionLockAllows(wx, wy)) {
                     continue;
                 }
 
@@ -3727,7 +3013,10 @@ private:
                     continue;
                 }
 
-                const bool is_blacklisted = isBlacklisted(wx, wy);
+                if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS) ||
+                    isDeadEndCandidate(map, wx, wy)) {
+                    continue;
+                }
 
                 const double angle_cost = std::abs(std::atan2(
                     std::sin(yaw - robot_yaw_),
@@ -3739,12 +3028,6 @@ private:
                 score += 3.0 * clearance;
                 score += 0.9 * projection;
                 score -= 0.7 * angle_cost;
-                score -= branchMemoryPenalty(wx, wy);
-                score -= escapeDirectionLockCost(wx, wy);
-
-                if (is_blacklisted) {
-                    continue;
-                }
 
                 if (!found || score > best_score) {
                     found = true;
@@ -3839,11 +3122,10 @@ private:
             if ((*start_distances)[robot_index] >= 0) {
                 current_start_path = (*start_distances)[robot_index] * resolution;
                 current_start_path_distance_ = current_start_path;
-                if (current_start_path > max_start_path_distance_) {
-                    max_start_path_distance_ = current_start_path;
-                    max_start_path_x_ = robot_x_;
-                    max_start_path_y_ = robot_y_;
-                }
+                max_start_path_distance_ = std::max(
+                    max_start_path_distance_,
+                    current_start_path
+                );
             }
         }
 
@@ -3978,14 +3260,6 @@ private:
                     const double goal_wx = origin_x + (goal_mx + 0.5) * resolution;
                     const double goal_wy = origin_y + (goal_my + 0.5) * resolution;
 
-                    if (isBehindRobotGoal(goal_wx, goal_wy)) {
-                        continue;
-                    }
-
-                    if (branchMemoryHit(goal_wx, goal_wy)) {
-                        continue;
-                    }
-
                     if (isInEntranceReturnZone(goal_wx, goal_wy)) {
                         continue;
                     }
@@ -3996,10 +3270,6 @@ private:
                     const double path_bottleneck_clearance = reachable_bottleneck_clearances[goal_index];
                     const double final_goal_distance =
                         std::hypot(goal_wx - robot_x_, goal_wy - robot_y_);
-
-                    if (!escapeDirectionLockAllows(goal_wx, goal_wy, start_path_distance)) {
-                        continue;
-                    }
 
                     if (isEntranceReturnForbiddenCandidate(
                             goal_wx,
@@ -4031,9 +3301,8 @@ private:
                         continue;
                     }
 
-                    const bool is_blacklisted = isBlacklisted(goal_wx, goal_wy);
-
-                    if (is_blacklisted) {
+                    if (isBlacklistedPoint(goal_wx, goal_wy, BLACKLIST_RADIUS) ||
+                        isDeadEndCandidate(goal_wx, goal_wy, start_path_distance)) {
                         continue;
                     }
 
@@ -4064,12 +3333,10 @@ private:
                     score += 0.80 * open_ratio;
                     score -= 0.45 * current_path_distance;
                     score -= 0.35 * angle_diff;
-                    score -= (allow_backtrack ? 2.00 : 6.00) * backtrack_amount;
-                    score -= 4.00 * std::max(0.0, -projection_gain);
+                    score -= (allow_backtrack ? 3.50 : 6.00) * backtrack_amount;
+                    score -= 5.00 * std::max(0.0, -projection_gain);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
-                    score -= branchMemoryPenalty(goal_wx, goal_wy);
-                    score -= escapeDirectionLockCost(goal_wx, goal_wy);
 
                     // 완전히 입구 쪽으로 되돌아가는 후보는 relaxed에서도 낮은 점수를 준다.
                     if (hasLeftEntrance() && distanceFromStart(goal_wx, goal_wy) < START_RETURN_GOAL_RADIUS) {
@@ -4150,8 +3417,7 @@ private:
 
                     consecutive_goal_failures_++;
                     addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-                    rememberBlockedBranch(BRANCH_MEMORY_TTL_FAILURE, "goal rejected");
-                    armDeadEndEscapeMode("goal rejected");
+                    addDeadEndZone(current_goal_x_, current_goal_y_, "Nav2 rejected goal");
                     goal_in_progress_ = false;
                     active_goal_handle_.reset();
                     trySendNextGoal();
@@ -4175,7 +3441,6 @@ private:
 
         best_goal_distance_ =
             std::hypot(current_goal_x_ - robot_x_, current_goal_y_ - robot_y_);
-        best_goal_path_gain_ = 0.0;
 
         last_progress_time_ = this->now();
 
@@ -4218,8 +3483,7 @@ private:
         const double start_distance = distanceFromStart(robot_x_, robot_y_);
         const double projection = forwardProjection(robot_x_, robot_y_);
 
-        if (!isDeadEndEscapeModeActive() &&
-            hasLeftEntrance() &&
+        if (hasLeftEntrance() &&
             (start_distance < START_RETURN_CANCEL_RADIUS ||
              projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
              max_forward_projection_ ||
@@ -4240,31 +3504,6 @@ private:
 
         const double goal_distance =
             std::hypot(current_goal_x_ - robot_x_, current_goal_y_ - robot_y_);
-        const double path_gain =
-            current_start_path_distance_ - goal_start_path_distance_;
-
-        if (goal_distance > KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE &&
-            isBehindRobotGoal(current_goal_x_, current_goal_y_)) {
-            RCLCPP_WARN(
-                this->get_logger(),
-                "현재 목표가 로봇 뒤쪽으로 바뀌어 취소합니다: goal=(%.2f, %.2f), dist=%.2f, align=%.2f",
-                current_goal_x_,
-                current_goal_y_,
-                goal_distance,
-                robotHeadingAlignment(current_goal_x_, current_goal_y_)
-            );
-            rememberBlockedBranch(BRANCH_MEMORY_TTL_CANCEL, "active goal moved behind robot");
-            cancelCurrentGoalAndBlacklist();
-            return;
-        }
-
-        if (path_gain > best_goal_path_gain_ + 0.04) {
-            best_goal_path_gain_ = path_gain;
-            best_goal_distance_ = std::min(best_goal_distance_, goal_distance);
-            last_progress_time_ = this->now();
-            contact_oscillation_active_ = false;
-            return;
-        }
 
         if (goal_distance + STUCK_GOAL_IMPROVEMENT < best_goal_distance_) {
             best_goal_distance_ = goal_distance;
@@ -4347,9 +3586,7 @@ private:
 
                 consecutive_goal_failures_++;
                 addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-                rememberPocketBranchIfNeeded("goal succeeded without movement pocket");
-                rememberBlockedBranch(BRANCH_MEMORY_TTL_FAILURE, "goal succeeded without movement");
-                armDeadEndEscapeMode("goal succeeded without movement");
+                addDeadEndZone(current_goal_x_, current_goal_y_, "success without real progress");
                 should_escape_after_result = canUseBackupRecovery();
                 should_contact_reverse_after_result =
                     nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
@@ -4366,17 +3603,11 @@ private:
                 );
                 consecutive_goal_failures_ = 0;
                 addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_SUCCESS);
-                if (path_gain > 0.20 || projection_gain > 0.18) {
-                    escape_direction_lock_active_ = false;
-                }
                 continue_reason = "goal succeeded";
             }
         } else if (canceling_goal_) {
             RCLCPP_WARN(this->get_logger(), "정체된 목표 취소 완료");
             consecutive_goal_failures_++;
-            rememberPocketBranchIfNeeded("stuck goal canceled pocket");
-            rememberBlockedBranch(BRANCH_MEMORY_TTL_CANCEL, "stuck goal canceled");
-            armDeadEndEscapeMode("stuck goal canceled");
             should_escape_after_result = canUseBackupRecovery();
             should_contact_reverse_after_result =
                 nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;
@@ -4385,17 +3616,15 @@ private:
         } else {
             RCLCPP_WARN(
                 this->get_logger(),
-                "Nav2 목표 실패. 같은 지점을 즉시 금지하지 않고 재탐색합니다: x=%.2f, y=%.2f",
+                "Nav2 목표 실패. 해당 dead-end zone을 금지하고 재탐색합니다: x=%.2f, y=%.2f",
                 current_goal_x_,
                 current_goal_y_
             );
 
             consecutive_goal_failures_++;
-            // 같은 실패 goal 반복만 짧게 막고, local fallback은 필요하면 blacklist를 무시한다.
+            // 실패한 goal은 모든 생성기에서 제외해 같은 dead-end 가지를 반복하지 않는다.
             addBlacklistPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_FAILURE);
-            rememberPocketBranchIfNeeded("Nav2 goal failed pocket");
-            rememberBlockedBranch(BRANCH_MEMORY_TTL_FAILURE, "Nav2 goal failed");
-            armDeadEndEscapeMode("Nav2 goal failed");
+            addDeadEndZone(current_goal_x_, current_goal_y_, "Nav2 goal failed");
             should_escape_after_result = canUseBackupRecovery();
             should_contact_reverse_after_result =
                 nearestContactDistance() < CONTACT_OSCILLATION_DISTANCE;

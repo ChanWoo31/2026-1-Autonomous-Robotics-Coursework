@@ -3,6 +3,8 @@
 #include <sensor_msgs/msg/laser_scan.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <tf2_ros/transform_listener.h>
@@ -41,6 +43,10 @@ public:
 
         // /goal_pose is also consumed by Nav2, so use a private topic only for visualization.
         goal_pub_ = this->create_publisher<geometry_msgs::msg::PoseStamped>("/maze_explorer/goal_pose", 10);
+        blacklist_marker_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>(
+            "/maze_explorer/blacklist_markers",
+            10
+        );
         // Nav2의 cmd_vel을 safety filter로 보내기 위한 입력 토픽.
         // 실제 로봇으로 나가는 /cmd_vel은 safety filter가 publish해야 한다.
         escape_cmd_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
@@ -69,6 +75,7 @@ private:
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     rclcpp_action::Client<NavigateToPose>::SharedPtr nav_client_;
     rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr goal_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr blacklist_marker_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr escape_cmd_pub_;
     rclcpp::TimerBase::SharedPtr watchdog_timer_;
     rclcpp::TimerBase::SharedPtr idle_retry_timer_;
@@ -94,6 +101,7 @@ private:
 
     double best_goal_distance_ = std::numeric_limits<double>::max();
     rclcpp::Time last_progress_time_;
+    double active_goal_start_path_distance_ = 0.0;
 
     double start_x_ = 0.0;
     double start_y_ = 0.0;
@@ -113,10 +121,10 @@ private:
 
     std::vector<BlacklistEntry> blacklist_;
 
-    const double BLACKLIST_RADIUS = 0.12;
-    const double BLACKLIST_TTL_SUCCESS = 3.0;
-    const double BLACKLIST_TTL_FAILURE = 6.0;
-    const double BLACKLIST_TTL_CANCEL = 5.0;
+    const double BLACKLIST_RADIUS = 0.30;
+    const double BLACKLIST_TTL_SUCCESS = 6.0;
+    const double BLACKLIST_TTL_FAILURE = 30.0;
+    const double BLACKLIST_TTL_CANCEL = 25.0;
 
     const double GOAL_CLEARANCE = 0.110;
     const double PATH_CLEARANCE = 0.095;
@@ -160,7 +168,7 @@ private:
     const double KEEP_MOVING_RELAXED_CLEARANCE = 0.105;
     const double KEEP_MOVING_MIN_BOTTLENECK = 0.115;
     const double KEEP_MOVING_RELAXED_BOTTLENECK = 0.105;
-    const double KEEP_MOVING_BLACKLIST_RADIUS = 0.08;
+    const double KEEP_MOVING_BLACKLIST_RADIUS = 0.16;
     const double KEEP_MOVING_BACKTRACK_ALLOWANCE = 0.25;
     const double OPEN_SPACE_RADIUS = 0.40;
     const double OPEN_SPACE_MIN_RATIO = 0.40;
@@ -258,13 +266,14 @@ private:
             if (isBacktrackingTowardEntrance()) {
                 RCLCPP_WARN(
                     this->get_logger(),
-                    "시작점 방향 되감기 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f",
+                    "시작점 방향 되감기 감지. 현재 목표 취소: 현재거리=%.2f, 최대거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f, goal경로거리=%.2f",
                     distanceFromStart(robot_x_, robot_y_),
                     max_start_distance_,
                     forwardProjection(robot_x_, robot_y_),
                     max_forward_projection_,
                     current_start_path_distance_,
-                    max_start_path_distance_
+                    max_start_path_distance_,
+                    active_goal_start_path_distance_
                 );
 
                 cancelCurrentGoalAndBlacklist();
@@ -459,6 +468,7 @@ private:
     void pruneExpiredBlacklist()
     {
         const rclcpp::Time now = this->now();
+        const size_t before_size = blacklist_.size();
 
         blacklist_.erase(
             std::remove_if(
@@ -468,6 +478,10 @@ private:
                     return entry.expires_at <= now;
                 }),
             blacklist_.end());
+
+        if (blacklist_.size() != before_size) {
+            publishBlacklistMarkers();
+        }
     }
 
     void addBlacklistPoint(double wx, double wy, double ttl_seconds)
@@ -480,9 +494,78 @@ private:
             this->now() + rclcpp::Duration::from_seconds(ttl_seconds)
         });
 
-        if (blacklist_.size() > 16) {
-            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 4);
+        if (blacklist_.size() > 32) {
+            blacklist_.erase(blacklist_.begin(), blacklist_.begin() + 8);
         }
+
+        publishBlacklistMarkers();
+    }
+
+    visualization_msgs::msg::Marker makeDeleteAllBlacklistMarker()
+    {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = "map";
+        marker.header.stamp = this->now();
+        marker.ns = "blacklist";
+        marker.id = 0;
+        marker.action = visualization_msgs::msg::Marker::DELETEALL;
+        return marker;
+    }
+
+    visualization_msgs::msg::Marker makeBlacklistMarker(
+        int id,
+        const BlacklistEntry& entry)
+    {
+        visualization_msgs::msg::Marker marker;
+        marker.header.frame_id = "map";
+        marker.header.stamp = this->now();
+        marker.ns = "blacklist";
+        marker.id = id;
+        marker.type = visualization_msgs::msg::Marker::CYLINDER;
+        marker.action = visualization_msgs::msg::Marker::ADD;
+        marker.pose.position.x = entry.x;
+        marker.pose.position.y = entry.y;
+        marker.pose.position.z = 0.035;
+        marker.pose.orientation.w = 1.0;
+        marker.scale.x = BLACKLIST_RADIUS * 2.0;
+        marker.scale.y = BLACKLIST_RADIUS * 2.0;
+        marker.scale.z = 0.07;
+        marker.color.r = 1.0;
+        marker.color.g = 0.02;
+        marker.color.b = 0.02;
+        marker.color.a = 0.38;
+        const double remaining_seconds =
+            std::max(0.10, (entry.expires_at - this->now()).seconds());
+        marker.lifetime = rclcpp::Duration::from_seconds(remaining_seconds);
+        return marker;
+    }
+
+    void publishBlacklistMarkers()
+    {
+        if (!blacklist_marker_pub_) {
+            return;
+        }
+
+        visualization_msgs::msg::MarkerArray markers;
+        markers.markers.push_back(makeDeleteAllBlacklistMarker());
+
+        int marker_id = 1;
+        for (const auto& entry : blacklist_) {
+            markers.markers.push_back(makeBlacklistMarker(marker_id++, entry));
+        }
+
+        blacklist_marker_pub_->publish(markers);
+    }
+
+    bool isBlacklistedPoint(double wx, double wy, double radius) const
+    {
+        for (const auto& bp : blacklist_) {
+            if (std::hypot(wx - bp.x, wy - bp.y) < radius) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     bool hasLeftEntrance() const
@@ -545,6 +628,15 @@ private:
 
         if (distanceFromStart(robot_x_, robot_y_) < START_RETURN_CANCEL_RADIUS) {
             return true;
+        }
+
+        // Branch 탈출 goal은 현재 깊이보다 더 안쪽/옆쪽으로 가기 위해
+        // 순간적으로 graph depth가 줄어들 수 있다. 목표 자체가 최대 진입 깊이
+        // 근처이거나 더 깊다면 그 중간 움직임은 입구 복귀로 보지 않는다.
+        if (goal_in_progress_ &&
+            active_goal_start_path_distance_ + START_PATH_CANCEL_BACKTRACK >=
+            max_start_path_distance_) {
+            return false;
         }
 
         if (forwardProjection(robot_x_, robot_y_) +
@@ -2354,7 +2446,7 @@ private:
             KEEP_MOVING_SHORT_MIN_EUCLIDEAN_DISTANCE :
             KEEP_MOVING_MIN_EUCLIDEAN_DISTANCE;
 
-        auto selectGoal = [&](bool relaxed, bool ignore_blacklist, int& best_mx, int& best_my,
+        auto selectGoal = [&](bool relaxed, int& best_mx, int& best_my,
                               double& best_score, double& best_path_distance,
                               double& best_start_path_distance, double& best_projection,
                               double& best_bottleneck) -> bool {
@@ -2437,20 +2529,8 @@ private:
                         continue;
                     }
 
-                    if (!ignore_blacklist) {
-                        bool is_blacklisted = false;
-
-                        for (const auto& bp : blacklist_) {
-                            if (std::hypot(wx - bp.x, wy - bp.y) <
-                                KEEP_MOVING_BLACKLIST_RADIUS) {
-                                is_blacklisted = true;
-                                break;
-                            }
-                        }
-
-                        if (is_blacklisted) {
-                            continue;
-                        }
+                    if (isBlacklistedPoint(wx, wy, KEEP_MOVING_BLACKLIST_RADIUS)) {
+                        continue;
                     }
 
                     const double yaw = std::atan2(wy - robot_y_, wx - robot_x_);
@@ -2512,7 +2592,6 @@ private:
 
         bool found = selectGoal(
             false,
-            false,
             best_mx,
             best_my,
             best_score,
@@ -2524,21 +2603,6 @@ private:
 
         if (!found) {
             found = selectGoal(
-                true,
-                false,
-                best_mx,
-                best_my,
-                best_score,
-                best_path_distance,
-                best_start_path_distance,
-                best_projection,
-                best_bottleneck
-            );
-        }
-
-        if (!found) {
-            found = selectGoal(
-                true,
                 true,
                 best_mx,
                 best_my,
@@ -2680,15 +2744,7 @@ private:
                 const double wx = mapToWorldX(map, mx);
                 const double wy = mapToWorldY(map, my);
 
-                bool is_blacklisted = false;
-                for (const auto& bp : blacklist_) {
-                    if (std::hypot(wx - bp.x, wy - bp.y) < BLACKLIST_RADIUS) {
-                        is_blacklisted = true;
-                        break;
-                    }
-                }
-
-                if (is_blacklisted) {
+                if (isBlacklistedPoint(wx, wy, BLACKLIST_RADIUS)) {
                     continue;
                 }
 
@@ -2874,14 +2930,8 @@ private:
                     continue;
                 }
 
-                bool is_blacklisted = false;
-
-                for (const auto& bp : blacklist_) {
-                    if (std::hypot(wx - bp.x, wy - bp.y) < KEEP_MOVING_BLACKLIST_RADIUS) {
-                        is_blacklisted = true;
-                        break;
-                    }
-                }
+                const bool is_blacklisted =
+                    isBlacklistedPoint(wx, wy, KEEP_MOVING_BLACKLIST_RADIUS);
 
                 const double angle_cost = std::abs(std::atan2(
                     std::sin(yaw - robot_yaw_),
@@ -3170,15 +3220,7 @@ private:
                         continue;
                     }
 
-                    bool is_blacklisted = false;
-                    for (const auto& bp : blacklist_) {
-                        if (std::hypot(goal_wx - bp.x, goal_wy - bp.y) < BLACKLIST_RADIUS) {
-                            is_blacklisted = true;
-                            break;
-                        }
-                    }
-
-                    if (is_blacklisted && !allow_backtrack) {
+                    if (isBlacklistedPoint(goal_wx, goal_wy, BLACKLIST_RADIUS)) {
                         continue;
                     }
 
@@ -3213,10 +3255,6 @@ private:
                     score -= 4.00 * std::max(0.0, -projection_gain);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - clearance);
                     score -= 7.00 * std::max(0.0, WALL_CLEARANCE_COMFORT - path_bottleneck_clearance);
-
-                    if (is_blacklisted) {
-                        score -= 1.0;
-                    }
 
                     // 완전히 입구 쪽으로 되돌아가는 후보는 relaxed에서도 낮은 점수를 준다.
                     if (hasLeftEntrance() && distanceFromStart(goal_wx, goal_wy) < START_RETURN_GOAL_RADIUS) {
@@ -3317,6 +3355,30 @@ private:
         goal_start_y_ = robot_y_;
         goal_start_projection_ = forwardProjection(robot_x_, robot_y_);
         goal_start_path_distance_ = current_start_path_distance_;
+        active_goal_start_path_distance_ = current_start_path_distance_;
+
+        if (latest_map_) {
+            const std::vector<int>* start_distances = nullptr;
+            const std::vector<double>* start_bottleneck_clearances = nullptr;
+            int goal_mx = 0;
+            int goal_my = 0;
+
+            if (getStartReachableMetrics(
+                    latest_map_,
+                    start_distances,
+                    start_bottleneck_clearances) &&
+                worldToMap(latest_map_, current_goal_x_, current_goal_y_, goal_mx, goal_my)) {
+                const int width = static_cast<int>(latest_map_->info.width);
+                const int goal_index = goal_my * width + goal_mx;
+
+                if (goal_index >= 0 &&
+                    goal_index < static_cast<int>(start_distances->size()) &&
+                    (*start_distances)[goal_index] >= 0) {
+                    active_goal_start_path_distance_ =
+                        (*start_distances)[goal_index] * latest_map_->info.resolution;
+                }
+            }
+        }
 
         best_goal_distance_ =
             std::hypot(current_goal_x_ - robot_x_, current_goal_y_ - robot_y_);
@@ -3362,19 +3424,17 @@ private:
         const double start_distance = distanceFromStart(robot_x_, robot_y_);
         const double projection = forwardProjection(robot_x_, robot_y_);
 
-        if (hasLeftEntrance() &&
-            (start_distance < START_RETURN_CANCEL_RADIUS ||
-             projection + NO_RETURN_PROJECTION_BACKTRACK_ALLOWANCE <
-             max_forward_projection_ ||
-             start_distance + NO_RETURN_DISTANCE_BACKTRACK_ALLOWANCE <
-             max_start_distance_)) {
+        if (isBacktrackingTowardEntrance()) {
             RCLCPP_WARN(
                 this->get_logger(),
-                "입구 복귀 방향 이동 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f, 현재투영=%.2f, 최대투영=%.2f",
+                "입구 복귀 방향 이동 감지. 현재 목표 취소: 시작거리=%.2f, 최대시작거리=%.2f, 현재투영=%.2f, 최대투영=%.2f, 현재경로거리=%.2f, 최대경로거리=%.2f, goal경로거리=%.2f",
                 start_distance,
                 max_start_distance_,
                 projection,
-                max_forward_projection_
+                max_forward_projection_,
+                current_start_path_distance_,
+                max_start_path_distance_,
+                active_goal_start_path_distance_
             );
 
             cancelCurrentGoalAndBlacklist();

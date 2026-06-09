@@ -17,38 +17,36 @@ public:
     safe_cmd_topic_ = this->declare_parameter<std::string>("safe_cmd_topic", "/cmd_vel");
     scan_topic_ = this->declare_parameter<std::string>("scan_topic", "/scan");
 
-    max_linear_ = this->declare_parameter<double>("max_linear", 0.14);
+    max_linear_ = this->declare_parameter<double>("max_linear", 0.16);
     max_reverse_ = this->declare_parameter<double>("max_reverse", 0.06);
-    max_angular_ = this->declare_parameter<double>("max_angular", 1.40);
+    max_angular_ = this->declare_parameter<double>("max_angular", 1.50);
 
     // 사용자는 base_link -> laser yaw를 3.14159로 주고 있음.
     // 따라서 LaserScan raw frame 기준 로봇 정면은 보통 0도가 아니라 pi 근처다.
     // 만약 필터가 계속 이상하게 막으면 실행 시 front_angle_offset:=0.0으로 바꿔서 비교한다.
     front_angle_offset_ = this->declare_parameter<double>("front_angle_offset", 3.14159);
 
-    front_stop_ = this->declare_parameter<double>("front_stop", 0.098);
-    front_slow_ = this->declare_parameter<double>("front_slow", 0.285);
-    side_stop_ = this->declare_parameter<double>("side_stop", 0.088);
-    side_slow_ = this->declare_parameter<double>("side_slow", 0.165);
+    front_stop_ = this->declare_parameter<double>("front_stop", 0.070);
+    front_slow_ = this->declare_parameter<double>("front_slow", 0.180);
+    side_stop_ = this->declare_parameter<double>("side_stop", 0.075);
+    side_slow_ = this->declare_parameter<double>("side_slow", 0.110);
     front_half_width_deg_ = this->declare_parameter<double>("front_half_width_deg", 14.0);
     wide_half_width_deg_ = this->declare_parameter<double>("wide_half_width_deg", 24.0);
     corner_angle_deg_ = this->declare_parameter<double>("corner_angle_deg", 38.0);
     corner_half_width_deg_ = this->declare_parameter<double>("corner_half_width_deg", 10.0);
     side_angle_deg_ = this->declare_parameter<double>("side_angle_deg", 82.0);
     side_half_width_deg_ = this->declare_parameter<double>("side_half_width_deg", 12.0);
-    side_turn_stop_ = this->declare_parameter<double>("side_turn_stop", 0.085);
-    side_turn_slow_ = this->declare_parameter<double>("side_turn_slow", 0.150);
-    corner_stop_ = this->declare_parameter<double>("corner_stop", 0.112);
-    corner_slow_ = this->declare_parameter<double>("corner_slow", 0.225);
-    side_linear_stop_ = this->declare_parameter<double>("side_linear_stop", 0.078);
-    side_linear_slow_ = this->declare_parameter<double>("side_linear_slow", 0.205);
-    side_imbalance_allowance_ = this->declare_parameter<double>("side_imbalance_allowance", 0.015);
-    wall_nudge_angular_ = this->declare_parameter<double>("wall_nudge_angular", 0.10);
-    center_nudge_gain_ = this->declare_parameter<double>("center_nudge_gain", 1.20);
-    center_nudge_max_angular_ = this->declare_parameter<double>("center_nudge_max_angular", 0.35);
+    side_turn_stop_ = this->declare_parameter<double>("side_turn_stop", 0.075);
+    side_turn_slow_ = this->declare_parameter<double>("side_turn_slow", 0.125);
+    corner_stop_ = this->declare_parameter<double>("corner_stop", 0.085);
+    corner_slow_ = this->declare_parameter<double>("corner_slow", 0.145);
+    side_linear_stop_ = this->declare_parameter<double>("side_linear_stop", 0.055);
+    side_linear_slow_ = this->declare_parameter<double>("side_linear_slow", 0.095);
+    side_imbalance_allowance_ = this->declare_parameter<double>("side_imbalance_allowance", 0.030);
+    wall_nudge_angular_ = this->declare_parameter<double>("wall_nudge_angular", 0.18);
     pure_turn_linear_epsilon_ = this->declare_parameter<double>("pure_turn_linear_epsilon", 0.010);
     preserve_turn_angular_ = this->declare_parameter<double>("preserve_turn_angular", 0.080);
-    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.030);
+    min_creep_linear_ = this->declare_parameter<double>("min_creep_linear", 0.045);
 
     command_timeout_ = this->declare_parameter<double>("command_timeout", 0.35);
     scan_timeout_ = this->declare_parameter<double>("scan_timeout", 0.60);
@@ -79,7 +77,7 @@ public:
 
     RCLCPP_WARN(
       this->get_logger(),
-      "cmd_vel_safety_filter_v13_fast_safe loaded: %s -> %s, scan=%s, front_offset=%.3f rad",
+      "cmd_vel_safety_filter_v11_hybrid loaded: %s -> %s, scan=%s, front_offset=%.3f rad",
       nav_cmd_topic_.c_str(), safe_cmd_topic_.c_str(), scan_topic_.c_str(), front_angle_offset_);
   }
 
@@ -110,8 +108,6 @@ private:
   double side_linear_slow_;
   double side_imbalance_allowance_;
   double wall_nudge_angular_;
-  double center_nudge_gain_;
-  double center_nudge_max_angular_;
   double pure_turn_linear_epsilon_;
   double preserve_turn_angular_;
   double min_creep_linear_;
@@ -216,6 +212,11 @@ private:
     double stop_distance,
     double slow_distance) const
   {
+    if (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_ &&
+        std::abs(cmd.angular.z) >= preserve_turn_angular_) {
+      return;
+    }
+
     if (left_distance < stop_distance && cmd.angular.z > 0.0) {
       cmd.angular.z = 0.0;
     } else if (left_distance < slow_distance && cmd.angular.z > 0.0) {
@@ -238,13 +239,14 @@ private:
     const double side_max = std::max(left_distance, right_distance);
     const double imbalance = side_max - side_min;
 
-    if (side_min >= side_linear_slow_) {
+    if (side_min >= side_linear_slow_ || imbalance < side_imbalance_allowance_) {
       return;
     }
 
-    const bool preserving_pure_turn =
-      std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_ &&
-      std::abs(cmd.angular.z) >= preserve_turn_angular_;
+    if (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_ &&
+        std::abs(cmd.angular.z) >= preserve_turn_angular_) {
+      return;
+    }
 
     const double away_from_close_wall =
       (left_distance < right_distance) ? -1.0 : 1.0;
@@ -253,10 +255,8 @@ private:
       if (cmd.linear.x > 0.0) {
         cmd.linear.x = 0.0;
       }
-      if (imbalance >= side_imbalance_allowance_ && !preserving_pure_turn) {
-        cmd.angular.z = away_from_close_wall *
-          std::max(std::abs(cmd.angular.z), wall_nudge_angular_);
-      }
+      cmd.angular.z = away_from_close_wall *
+        std::max(std::abs(cmd.angular.z), wall_nudge_angular_);
       return;
     }
 
@@ -270,16 +270,7 @@ private:
         std::min(min_creep_linear_, max_linear_));
     }
 
-    if (imbalance < side_imbalance_allowance_ || preserving_pure_turn) {
-      return;
-    }
-
-    const double center_nudge = clamp(
-      wall_nudge_angular_ + center_nudge_gain_ * imbalance,
-      wall_nudge_angular_,
-      center_nudge_max_angular_);
-
-    cmd.angular.z += away_from_close_wall * center_nudge;
+    cmd.angular.z += away_from_close_wall * wall_nudge_angular_;
   }
 
   void publishZero()
@@ -381,7 +372,9 @@ private:
     }
 
     if (front_wide < side_stop_) {
-      cmd.angular.z = clamp(cmd.angular.z, -0.80, 0.80);
+      const double turn_limit =
+        (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_) ? 1.70 : 0.80;
+      cmd.angular.z = clamp(cmd.angular.z, -turn_limit, turn_limit);
     }
 
     limitTurnTowardWall(
@@ -407,7 +400,7 @@ private:
       this->get_logger(),
       *this->get_clock(),
       1000,
-      "v13 fast-safe filter: front=(%.3f, %.3f), corner=(%.3f, %.3f), side=(%.3f, %.3f), in=(%.3f, %.3f), out=(%.3f, %.3f)",
+      "v11 hybrid filter: front=(%.3f, %.3f), corner=(%.3f, %.3f), side=(%.3f, %.3f), in=(%.3f, %.3f), out=(%.3f, %.3f)",
       front_narrow,
       front_wide,
       left_corner,

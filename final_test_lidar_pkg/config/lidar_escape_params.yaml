@@ -1,0 +1,59 @@
+lidar_escape_node:
+  ros__parameters:
+    scan_topic: /scan
+    odom_topic: /odom
+    cmd_vel_topic: /cmd_vel
+
+    # Laser angle that points to the robot front, in radians.
+    # TurtleBot3 LDS scans usually work with 0.0. Use 3.14159 if front/back is inverted.
+    front_angle_offset: 3.14159
+
+    control_rate_hz: 20.0
+    scan_timeout_sec: 0.8
+
+    max_linear_speed: 0.20
+    min_linear_speed: 0.045
+    backtrack_linear_speed: 0.10
+    backup_speed: 0.075
+    max_angular_speed: 1.35
+    steering_gain: 1.55
+    wall_balance_gain: 0.22
+
+    hard_stop_distance: 0.145
+    stop_distance: 0.19
+    slow_distance: 0.62
+    side_stop_distance: 0.135
+    rear_stop_distance: 0.16
+
+    search_fov_deg: 155.0
+    branch_fov_deg: 180.0
+    open_ray_min_depth: 0.46
+    branch_min_depth: 0.85
+    dead_end_depth: 0.52
+    ray_score_max_range: 3.5
+    min_segment_width_deg: 8.0
+    branch_min_segment_width_deg: 12.0
+    segment_gap_deg: 4.0
+
+    center_preference_weight: 0.90
+    depth_weight: 1.00
+    width_weight: 0.35
+    turn_penalty_weight: 0.30
+    untried_branch_bonus: 1.20
+    tried_branch_penalty: 0.85
+    blocked_branch_penalty: 2.20
+
+    branch_record_radius: 0.42
+    branch_reached_radius: 0.30
+    branch_option_match_deg: 28.0
+    branch_option_separation_deg: 32.0
+
+    breadcrumb_spacing: 0.16
+    breadcrumb_reached_radius: 0.22
+    backup_distance: 0.32
+    backup_timeout_sec: 3.0
+    align_yaw_tolerance_deg: 10.0
+
+    escaped_clearance: 2.2
+    escaped_hold_sec: 1.5
+    stop_when_escaped: false

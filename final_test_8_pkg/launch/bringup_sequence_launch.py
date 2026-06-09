@@ -4,15 +4,10 @@ import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
-from launch.actions import GroupAction
 from launch.actions import IncludeLaunchDescription
 from launch.actions import TimerAction
-from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.actions import SetRemap
 
 
 def delayed(delay_seconds, action):
@@ -20,10 +15,7 @@ def delayed(delay_seconds, action):
 
 
 def generate_launch_description():
-    use_sim_time = LaunchConfiguration("use_sim_time")
-    use_rviz = LaunchConfiguration("use_rviz")
-
-    pkg_share = get_package_share_directory("final_test_6_pkg")
+    pkg_share = get_package_share_directory("final_test_8_pkg")
     mapper_params = os.path.join(
         pkg_share,
         "config",
@@ -63,41 +55,31 @@ def generate_launch_description():
         ),
         launch_arguments={
             "slam_params_file": mapper_params,
-            "use_sim_time": use_sim_time,
         }.items(),
     )
 
-    # 핵심 수정:
-    # Nav2가 /cmd_vel을 직접 내보내지 못하게 /cmd_vel_nav로 remap한다.
-    # 최종 /cmd_vel은 cmd_vel_safety_filter만 publish해야 한다.
-    nav2 = GroupAction([
-        SetRemap(src="/cmd_vel", dst="/cmd_vel_nav"),
-        SetRemap(src="cmd_vel", dst="/cmd_vel_nav"),
-        IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(
-                os.path.join(
-                    get_package_share_directory("nav2_bringup"),
-                    "launch",
-                    "navigation_launch.py",
-                )
-            ),
-            launch_arguments={
-                "params_file": nav2_params,
-                "use_sim_time": use_sim_time,
-            }.items(),
+    nav2 = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                get_package_share_directory("nav2_bringup"),
+                "launch",
+                "navigation_launch.py",
+            )
         ),
-    ])
+        launch_arguments={
+            "params_file": nav2_params,
+        }.items(),
+    )
 
     safety_filter = Node(
-        package="final_test_6_pkg",
+        package="final_test_8_pkg",
         executable="cmd_vel_safety_filter_v9",
         name="cmd_vel_safety_filter",
-        parameters=[nav2_params],
         output="screen",
     )
 
     maze_explorer = Node(
-        package="final_test_6_pkg",
+        package="final_test_8_pkg",
         executable="maze_explorer",
         name="maze_explorer",
         output="screen",
@@ -105,20 +87,9 @@ def generate_launch_description():
 
     rviz = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(rviz_launch),
-        condition=IfCondition(use_rviz),
     )
 
     return LaunchDescription([
-        DeclareLaunchArgument(
-            "use_sim_time",
-            default_value="false",
-            description="Use simulation/Gazebo clock instead of system time.",
-        ),
-        DeclareLaunchArgument(
-            "use_rviz",
-            default_value="true",
-            description="Start RViz with the navigation view.",
-        ),
         static_laser_tf,
         delayed(1.0, slam_toolbox),
         delayed(4.0, nav2),

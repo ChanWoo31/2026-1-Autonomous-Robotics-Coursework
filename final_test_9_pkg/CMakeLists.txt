@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.8)
-project(final_test_5_pkg)
+project(final_test_9_pkg)
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
@@ -14,7 +14,6 @@ find_package(nav_msgs REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(rclcpp_action REQUIRED)
-find_package(visualization_msgs REQUIRED)
 
 add_executable(maze_explorer
   src/maze_explorer.cpp
@@ -29,7 +28,6 @@ ament_target_dependencies(
   nav2_msgs
   tf2_ros
   rclcpp_action
-  visualization_msgs
 )
 
 add_executable(cmd_vel_safety_filter_v9

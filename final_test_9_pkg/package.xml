@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>final_test_5_pkg</name>
+  <name>final_test_9_pkg</name>
   <version>0.0.0</version>
   <description>TODO: Package description</description>
   <maintainer email="cwcw0301@gmail.com">han</maintainer>
@@ -17,7 +17,6 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>rclcpp_action</depend>
-  <depend>visualization_msgs</depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

@@ -1,4 +1,4 @@
-# v9 SAFETY: v7 fallback 기반 + 전진속도 상승. 실제 충돌 방지는 cmd_vel_safety_filter_v9가 담당
+# v10 MPPI: final_test_8 기반 + MPPI local controller 실험. 실제 충돌 방지는 cmd_vel_safety_filter_v9가 담당
 bt_navigator:
   ros__parameters:
     global_frame: map
@@ -40,51 +40,112 @@ controller_server:
       yaw_goal_tolerance: 6.28  # 프론티어 탐색 시 방향은 중요하지 않음
       
     FollowPath:
-      plugin: "teb_local_planner::TebLocalPlannerROS"
-      max_vel_x: 0.12           # 안전 필터와 속도 차이를 줄여 코너 shortcut을 완화
-      max_vel_x_backwards: 0.0  # 입구 방향 되감기 방지를 위해 후진 금지
-      max_vel_theta: 1.0
-      acc_lim_x: 1.0
-      acc_lim_theta: 0.9
-      min_turning_radius: 0.0   # 제자리 회전 완벽 지원
-      allow_init_with_backwards_motion: False
-      max_global_plan_lookahead_dist: 0.38
-      global_plan_prune_distance: 0.06
-      feasibility_check_lookahead_distance: 0.10
-      feasibility_check_no_poses: 2
-      global_plan_viapoint_sep: 0.05
-      
-      footprint_model:
-        type: "circular"
-        radius: 0.105            # Burger 실제 외곽+여유. safety filter가 최종 충돌 방지를 담당
-        
-      xy_goal_tolerance: 0.18
-      yaw_goal_tolerance: 6.28
-      free_goal_vel: true
-      
-      # 장애물 회피 설정
-      min_obstacle_dist: 0.060    # 좁은 통로는 유지하되 S자 안쪽 벽 긁힘을 줄임
-      include_costmap_obstacles: True
-      costmap_obstacles_behind_robot_dist: 0.5
-      obstacle_poses_affected: 18 # 최적화 연산량 감소 및 빠른 반응 속도 확보
-      
-      no_inner_iterations: 4
-      no_outer_iterations: 3
-      optimization_activate: True
-      optimization_verbose: False
-      penalty_epsilon: 0.02
-      
-      # 미로 돌파용 파라미터 튜닝
-      weight_max_vel_x: 2.0
-      weight_max_vel_theta: 1.0
-      weight_acc_lim_x: 1.0
-      weight_acc_lim_theta: 1.0
-      weight_kinematics_nh: 1000.0
-      weight_kinematics_forward_drive: 40.0   # 후진은 남기되 전진 주행을 더 선호
-      weight_kinematics_turning_radius: 1.0
-      weight_optimaltime: 6.0 
-      weight_obstacle: 95.0                   # 벽 쪽 궤적보다 중앙 궤적을 선호
-      weight_viapoint: 20.0                    # global path를 코너에서 과하게 자르지 않게 함
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 30              # 20Hz * 0.05s = 약 1.5초 예측. 막힌 곳에서 더 자주 판단
+      model_dt: 0.05
+      batch_size: 1100            # CPU 버벅임을 줄이기 위한 균형값
+      iteration_count: 1
+      temperature: 0.28
+      gamma: 0.015
+      motion_model: "DiffDrive"
+      visualize: false            # true면 /trajectories가 무거워질 수 있음
+      reset_period: 1.0
+      regenerate_noises: false
+      retry_attempt_limit: 1
+      prune_distance: 0.55
+      transform_tolerance: 0.2
+      max_robot_pose_search_dist: 1.2
+      enforce_path_inversion: false
+
+      # Burger 좁은 미로용 속도 범위. 최종 제한은 velocity_smoother + safety_filter가 한 번 더 담당한다.
+      vx_max: 0.20
+      vx_min: 0.0                 # 입구 방향 되감기 방지를 위해 controller 후진 샘플링 금지
+      vy_max: 0.0
+      wz_max: 1.55
+      vx_std: 0.08
+      vy_std: 0.01
+      wz_std: 0.80
+
+      TrajectoryVisualizer:
+        trajectory_step: 6
+        time_step: 3
+
+      critics: [
+        "ConstraintCritic",
+        "CostCritic",
+        "GoalCritic",
+        "GoalAngleCritic",
+        "PathAlignCritic",
+        "PathFollowCritic",
+        "PathAngleCritic",
+        "PreferForwardCritic",
+        "VelocityDeadbandCritic"
+      ]
+
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.5
+        critical_cost: 240.0
+        consider_footprint: false
+        collision_cost: 1000000.0
+        near_goal_distance: 0.25
+        trajectory_point_step: 2
+
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        threshold_to_consider: 0.65
+
+      GoalAngleCritic:
+        enabled: false            # frontier 탐색은 yaw가 중요하지 않음
+        cost_power: 1
+        cost_weight: 1.0
+        threshold_to_consider: 0.35
+
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
+        max_path_occupancy_ratio: 0.12
+        trajectory_point_step: 3
+        threshold_to_consider: 0.35
+        offset_from_furthest: 8
+        use_path_orientations: false
+
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 7.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.30
+
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.55
+        max_angle_to_furthest: 1.6
+        forward_preference: true
+
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
+        threshold_to_consider: 0.75
+
+      VelocityDeadbandCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
+        deadband_velocities: [0.025, 0.0, 0.12]
 
 local_costmap:
   local_costmap:
@@ -97,7 +158,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.02
-      robot_radius: 0.105          # Nav2 costmap과 TEB footprint를 반드시 동일하게 맞춤
+      robot_radius: 0.105          # Nav2 costmap과 MPPI 충돌 모델 기준
       plugins: ["obstacle_layer", "inflation_layer"] # 연산량 확보를 위해 voxel 제외
       
       inflation_layer:
@@ -128,7 +189,7 @@ global_costmap:
       robot_base_frame: base_link
       transform_tolerance: 1.5
       # Global planner만 약간 덜 보수적으로 둔다.
-      # 실제 충돌 회피는 local_costmap + TEB radius 0.105와 safety filter가 담당한다.
+      # 실제 충돌 회피는 local_costmap + MPPI cost critic + safety filter가 담당한다.
       robot_radius: 0.105
       resolution: 0.02
       track_unknown_space: true
@@ -188,9 +249,9 @@ behavior_server:
     robot_base_frame: base_link
     transform_timeout: 0.1
     simulate_ahead_time: 2.0
-    max_rotational_vel: 1.0
-    min_rotational_vel: 0.15
-    rotational_acc_lim: 0.9
+    max_rotational_vel: 1.85
+    min_rotational_vel: 0.35
+    rotational_acc_lim: 3.0
     enable_stamped_cmd_vel: false
 
 velocity_smoother:
@@ -198,12 +259,12 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.17, 0.0, 1.0]
-    min_velocity: [0.0, 0.0, -1.0]
+    max_velocity: [0.22, 0.0, 1.55]
+    min_velocity: [0.0, 0.0, -1.65]
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0
-    max_accel: [1.0, 0.0, 0.9]
-    max_decel: [-1.1, 0.0, -1.0]
+    max_accel: [1.40, 0.0, 2.2]
+    max_decel: [-1.5, 0.0, -2.4]
     odom_topic: "odom"
     odom_duration: 0.1
     enable_stamped_cmd_vel: false
@@ -241,9 +302,9 @@ cmd_vel_safety_filter:
     nav_cmd_topic: "/cmd_vel_nav"
     safe_cmd_topic: "/cmd_vel"
     scan_topic: "/scan"
-    max_linear: 0.10
+    max_linear: 0.20
     max_reverse: 0.06
-    max_angular: 1.20
+    max_angular: 1.90
     # laser TF를 yaw 3.14159로 publish하는 현재 구성에서는 LaserScan raw frame의 정면이 pi 근처일 수 있다.
     # RViz에서 /scan 정면 sector가 반대로 보이면 실행 시 front_angle_offset:=0.0으로 비교한다.
     front_angle_offset: 3.14159
@@ -264,8 +325,8 @@ cmd_vel_safety_filter:
     side_linear_stop: 0.065
     side_linear_slow: 0.115
     side_imbalance_allowance: 0.030
-    wall_nudge_angular: 0.14
-    min_creep_linear: 0.035
+    wall_nudge_angular: 0.18
+    min_creep_linear: 0.045
     pure_turn_linear_epsilon: 0.010
     preserve_turn_angular: 0.080
     command_timeout: 0.35
