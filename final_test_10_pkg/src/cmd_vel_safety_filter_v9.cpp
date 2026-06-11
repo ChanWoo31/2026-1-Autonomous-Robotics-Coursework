@@ -121,6 +121,10 @@ private:
   rclcpp::Time last_scan_time_;
   bool have_cmd_ = false;
   bool have_scan_ = false;
+  bool blocked_since_valid_ = false;
+  bool release_active_ = false;
+  rclcpp::Time blocked_since_;
+  rclcpp::Time release_until_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
   rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
@@ -205,6 +209,66 @@ private:
     return clamp((distance - stop_distance) / window, 0.30, 1.0);
   }
 
+  double awayFromCloseWallDirection(double left_distance, double right_distance) const
+  {
+    if (!std::isfinite(left_distance) && !std::isfinite(right_distance)) {
+      return 0.0;
+    }
+
+    if (!std::isfinite(left_distance)) {
+      return 1.0;
+    }
+
+    if (!std::isfinite(right_distance)) {
+      return -1.0;
+    }
+
+    if (std::abs(left_distance - right_distance) < side_imbalance_allowance_) {
+      return 0.0;
+    }
+
+    return left_distance < right_distance ? -1.0 : 1.0;
+  }
+
+  bool publishReleaseReverse(
+    const rclcpp::Time& now,
+    double rear_clearance,
+    double left_distance,
+    double right_distance,
+    const char* reason,
+    bool start_release)
+  {
+    const double release_rear_clearance = std::max(0.16, front_stop_ + 0.06);
+    if (rear_clearance < release_rear_clearance) {
+      return false;
+    }
+
+    geometry_msgs::msg::Twist release_cmd;
+    release_cmd.linear.x = -std::min(0.045, max_reverse_);
+    release_cmd.angular.z =
+      awayFromCloseWallDirection(left_distance, right_distance) *
+      std::min(0.12, max_angular_);
+
+    if (start_release) {
+      release_active_ = true;
+      release_until_ = now + rclcpp::Duration::from_seconds(0.40);
+      blocked_since_valid_ = false;
+    }
+    safe_pub_->publish(release_cmd);
+
+    RCLCPP_WARN_THROTTLE(
+      this->get_logger(),
+      *this->get_clock(),
+      1000,
+      "근접 정지 release 후진: rear=%.3f, linear=%.3f, angular=%.3f, reason=%s",
+      rear_clearance,
+      release_cmd.linear.x,
+      release_cmd.angular.z,
+      reason);
+
+    return true;
+  }
+
   void limitTurnTowardWall(
     geometry_msgs::msg::Twist& cmd,
     double left_distance,
@@ -260,17 +324,15 @@ private:
       return;
     }
 
-    if (cmd.linear.x > 0.0) {
-      cmd.linear.x *= slowdownScale(
-        side_min,
-        side_linear_stop_,
-        side_linear_slow_);
-      cmd.linear.x = std::max(
-        cmd.linear.x,
-        std::min(min_creep_linear_, max_linear_));
-    }
+    const double proximity_scale =
+      1.0 - slowdownScale(side_min, side_linear_stop_, side_linear_slow_);
+    const double imbalance_scale = std::clamp(
+      imbalance / std::max(side_imbalance_allowance_ * 3.0, 0.001),
+      0.30,
+      1.0);
+    const double nudge_scale = std::max(proximity_scale, imbalance_scale);
 
-    cmd.angular.z += away_from_close_wall * wall_nudge_angular_;
+    cmd.angular.z += away_from_close_wall * wall_nudge_angular_ * nudge_scale;
   }
 
   void publishZero()
@@ -345,9 +407,59 @@ private:
       front_angle_offset_ - deg2rad(side_angle_deg_),
       deg2rad(side_half_width_deg_));
 
+    const double rear_clearance = sectorMinCentered(
+      scan,
+      front_angle_offset_ + M_PI,
+      deg2rad(wide_half_width_deg_));
+
     const double front_min = std::min(front_narrow, front_wide);
     const double corner_min = std::min(left_corner, right_corner);
     const double slow_min = std::min(front_min, corner_min);
+    const double side_min = std::min(left_side, right_side);
+
+    if (release_active_) {
+      if (now < release_until_ &&
+          publishReleaseReverse(
+            now,
+            rear_clearance,
+            left_side,
+            right_side,
+            "active release",
+            false)) {
+        return;
+      }
+      release_active_ = false;
+    }
+
+    const bool wants_forward = cmd.linear.x > pure_turn_linear_epsilon_;
+    const bool wants_reverse = cmd.linear.x < -pure_turn_linear_epsilon_;
+    const bool hard_contact =
+      front_narrow < front_stop_ ||
+      corner_min < corner_stop_ ||
+      side_min < side_linear_stop_;
+    const bool hard_forward_blocked =
+      wants_forward &&
+      (hard_contact || front_wide < side_stop_);
+    const bool contact_release_needed =
+      hard_contact && !wants_reverse;
+
+    if (hard_forward_blocked || contact_release_needed) {
+      if (!blocked_since_valid_) {
+        blocked_since_ = now;
+        blocked_since_valid_ = true;
+      } else if ((now - blocked_since_).seconds() >= 0.50 &&
+                 publishReleaseReverse(
+                   now,
+                   rear_clearance,
+                   left_side,
+                   right_side,
+                   contact_release_needed ? "hard contact near obstacle" : "forward blocked near obstacle",
+                   true)) {
+        return;
+      }
+    } else {
+      blocked_since_valid_ = false;
+    }
 
     if (cmd.linear.x > 0.0 && (front_narrow < front_stop_ || front_wide < side_stop_)) {
       cmd.linear.x = 0.0;
@@ -373,7 +485,7 @@ private:
 
     if (front_wide < side_stop_) {
       const double turn_limit =
-        (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_) ? 1.70 : 0.80;
+        (std::abs(cmd.linear.x) <= pure_turn_linear_epsilon_) ? 1.45 : 0.80;
       cmd.angular.z = clamp(cmd.angular.z, -turn_limit, turn_limit);
     }
 

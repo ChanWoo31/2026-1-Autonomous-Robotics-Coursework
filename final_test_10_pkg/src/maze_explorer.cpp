@@ -136,6 +136,9 @@ private:
     bool pre_goal_turn_after_cancel_ = false;
     double pre_goal_turn_target_yaw_ = 0.0;
     std::string pre_goal_turn_reason_;
+    bool corridor_straight_after_cancel_ = false;
+    double corridor_straight_target_yaw_ = 0.0;
+    std::string corridor_straight_reason_;
 
     double start_x_ = 0.0;
     double start_y_ = 0.0;
@@ -245,7 +248,7 @@ private:
     const double FORWARD_CREEP_SPEED = 0.120;
     const double FORWARD_CREEP_DURATION = 0.75;
     const double FORWARD_CREEP_PROJECTION_CHECK_DISTANCE = 0.30;
-    const double FORWARD_CREEP_TURN_SPEED = 1.15;
+    const double FORWARD_CREEP_TURN_SPEED = 0.95;
     const double LOCAL_ESCAPE_RAY_MAX_DISTANCE = 0.85;
     const double LOCAL_ESCAPE_RAY_CLEARANCE = 0.060;
     const double LOCAL_ESCAPE_MIN_RAY_DISTANCE = 0.20;
@@ -259,10 +262,10 @@ private:
     const double LOCAL_ESCAPE_FORWARD_RAY_DISTANCE = 0.30;
     const double LOCAL_ESCAPE_STEP_DISTANCE = 0.45;
     const double LOCAL_ESCAPE_ALIGN_YAW = 0.35;
-    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 1.65;
-    const double LOCAL_ESCAPE_MIN_TURN_SPEED = 0.55;
+    const double LOCAL_ESCAPE_MAX_TURN_SPEED = 1.35;
+    const double LOCAL_ESCAPE_MIN_TURN_SPEED = 0.45;
     const double PRE_GOAL_TURN_ANGLE = 0.95;
-    const double PRE_GOAL_TURN_SPEED = 1.70;
+    const double PRE_GOAL_TURN_SPEED = 1.40;
     const double PRE_GOAL_TURN_MIN_DURATION = 0.35;
     const double PRE_GOAL_TURN_MAX_DURATION = 2.25;
     const double ACTIVE_GOAL_PRE_TURN_STALL = 0.45;
@@ -271,6 +274,20 @@ private:
     const double PLAN_GOAL_MATCH_RADIUS = 0.60;
     const double PLAN_FRESH_TIMEOUT = 1.20;
     const int GRID_TANGENT_MAX_EXPANSIONS = 220000;
+    const bool CORRIDOR_STRAIGHT_OVERRIDE_ENABLED = false;
+    const double CORRIDOR_STRAIGHT_SPEED = 0.110;
+    const double CORRIDOR_STRAIGHT_DURATION = 0.45;
+    const double CORRIDOR_STRAIGHT_MAX_YAW_ERROR = 0.34;
+    const double CORRIDOR_STRAIGHT_MIN_FRONT = 0.30;
+    const double CORRIDOR_STRAIGHT_MIN_CORNER = 0.135;
+    const double CORRIDOR_STRAIGHT_MIN_SIDE = 0.100;
+    const double CORRIDOR_STRAIGHT_MAX_SIDE = 0.34;
+    const double CORRIDOR_STRAIGHT_MAX_IMBALANCE = 0.18;
+    const double CORRIDOR_STRAIGHT_GATE_MAX_SIDE = 0.46;
+    const double CORRIDOR_STRAIGHT_YAW_GAIN = 0.65;
+    const double CORRIDOR_STRAIGHT_CENTER_GAIN = 0.70;
+    const double CORRIDOR_STRAIGHT_MAX_ANGULAR = 0.24;
+    const double CORRIDOR_STRAIGHT_STALL_TIME = 0.45;
     const double POCKET_ESCAPE_DURATION = 14.0;
     const double POCKET_ESCAPE_DEEP_MARGIN = 0.22;
     const int LOCAL_ESCAPE_SPIN_FAILURES_BEFORE_REVERSE = 1;
@@ -658,6 +675,225 @@ private:
         return true;
     }
 
+    bool computeCorridorStraightCommand(
+        double target_yaw,
+        double& linear_speed,
+        double& angular_speed,
+        double& front_clearance,
+        double& left_side,
+        double& right_side,
+        double& yaw_error) const
+    {
+        if (!isScanFresh()) {
+            return false;
+        }
+
+        yaw_error = normalizeAngle(target_yaw - robot_yaw_);
+
+        if (std::abs(yaw_error) > CORRIDOR_STRAIGHT_MAX_YAW_ERROR) {
+            return false;
+        }
+
+        front_clearance = scanSectorMin(0.0, LOCAL_ESCAPE_SCAN_HALF_WIDTH);
+        const double left_corner = scanSectorMin(
+            3.14159265358979323846 / 4.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+        const double right_corner = scanSectorMin(
+            -3.14159265358979323846 / 4.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+        left_side = scanSectorMin(
+            3.14159265358979323846 / 2.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+        right_side = scanSectorMin(
+            -3.14159265358979323846 / 2.0,
+            LOCAL_ESCAPE_SCAN_HALF_WIDTH
+        );
+
+        const double corner_min = std::min(left_corner, right_corner);
+        const bool left_side_valid = std::isfinite(left_side);
+        const bool right_side_valid = std::isfinite(right_side);
+
+        if (!left_side_valid && !right_side_valid) {
+            return false;
+        }
+
+        const double side_min =
+            left_side_valid && right_side_valid ? std::min(left_side, right_side) :
+            (left_side_valid ? left_side : right_side);
+        const double side_max =
+            left_side_valid && right_side_valid ? std::max(left_side, right_side) :
+            std::numeric_limits<double>::infinity();
+        const bool balanced_corridor =
+            left_side_valid &&
+            right_side_valid &&
+            side_min <= CORRIDOR_STRAIGHT_MAX_SIDE &&
+            side_max - side_min <= CORRIDOR_STRAIGHT_MAX_IMBALANCE;
+        const bool gate_corridor =
+            side_min <= CORRIDOR_STRAIGHT_GATE_MAX_SIDE;
+
+        if (front_clearance < CORRIDOR_STRAIGHT_MIN_FRONT ||
+            corner_min < CORRIDOR_STRAIGHT_MIN_CORNER ||
+            side_min < CORRIDOR_STRAIGHT_MIN_SIDE ||
+            (!balanced_corridor && !gate_corridor)) {
+            return false;
+        }
+
+        double center_error = 0.0;
+        if (left_side_valid && right_side_valid) {
+            const double clamped_left =
+                std::min(left_side, CORRIDOR_STRAIGHT_GATE_MAX_SIDE);
+            const double clamped_right =
+                std::min(right_side, CORRIDOR_STRAIGHT_GATE_MAX_SIDE);
+            center_error = clamped_left - clamped_right;
+        } else if (left_side_valid) {
+            center_error = left_side - CORRIDOR_STRAIGHT_GATE_MAX_SIDE;
+        } else {
+            center_error = CORRIDOR_STRAIGHT_GATE_MAX_SIDE - right_side;
+        }
+        angular_speed = std::clamp(
+            CORRIDOR_STRAIGHT_YAW_GAIN * yaw_error +
+            CORRIDOR_STRAIGHT_CENTER_GAIN * center_error,
+            -CORRIDOR_STRAIGHT_MAX_ANGULAR,
+            CORRIDOR_STRAIGHT_MAX_ANGULAR
+        );
+        linear_speed = CORRIDOR_STRAIGHT_SPEED;
+
+        if (front_clearance < CORRIDOR_STRAIGHT_MIN_FRONT + 0.08) {
+            linear_speed *= 0.75;
+        }
+
+        return true;
+    }
+
+    bool startCorridorStraightToYaw(double target_yaw, const std::string& reason)
+    {
+        if (!CORRIDOR_STRAIGHT_OVERRIDE_ENABLED) {
+            return false;
+        }
+
+        if (escape_active_ || goal_in_progress_ || canceling_goal_) {
+            return false;
+        }
+
+        double linear_speed = 0.0;
+        double angular_speed = 0.0;
+        double front_clearance = 0.0;
+        double left_side = 0.0;
+        double right_side = 0.0;
+        double yaw_error = 0.0;
+
+        if (!computeCorridorStraightCommand(
+                target_yaw,
+                linear_speed,
+                angular_speed,
+                front_clearance,
+                left_side,
+                right_side,
+                yaw_error)) {
+            return false;
+        }
+
+        geometry_msgs::msg::Twist stop;
+        escape_cmd_pub_->publish(stop);
+
+        recovery_linear_speed_ = linear_speed;
+        recovery_angular_speed_ = angular_speed;
+        escape_active_ = true;
+        escape_until_ =
+            this->now() + rclcpp::Duration::from_seconds(CORRIDOR_STRAIGHT_DURATION);
+        local_escape_spin_failures_ = 0;
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "좁은 통로 직진 override: linear=%.3f, angular=%.3f, front=%.2f, side=(%.2f, %.2f), yaw_error=%.2f, reason=%s",
+            recovery_linear_speed_,
+            recovery_angular_speed_,
+            front_clearance,
+            left_side,
+            right_side,
+            yaw_error,
+            reason.c_str()
+        );
+
+        return true;
+    }
+
+    bool startCorridorStraightTowardGridPath(
+        const nav_msgs::msg::OccupancyGrid::SharedPtr& map,
+        double goal_x,
+        double goal_y,
+        const std::string& reason)
+    {
+        double target_yaw = 0.0;
+        double target_distance = 0.0;
+
+        if (!gridPathTangentYaw(map, goal_x, goal_y, target_yaw, target_distance)) {
+            return false;
+        }
+
+        return startCorridorStraightToYaw(target_yaw, reason);
+    }
+
+    bool cancelActiveGoalForCorridorStraight(double target_yaw, const std::string& reason)
+    {
+        if (!CORRIDOR_STRAIGHT_OVERRIDE_ENABLED) {
+            return false;
+        }
+
+        if (!active_goal_handle_ || canceling_goal_) {
+            return false;
+        }
+
+        double linear_speed = 0.0;
+        double angular_speed = 0.0;
+        double front_clearance = 0.0;
+        double left_side = 0.0;
+        double right_side = 0.0;
+        double yaw_error = 0.0;
+
+        if (!computeCorridorStraightCommand(
+                target_yaw,
+                linear_speed,
+                angular_speed,
+                front_clearance,
+                left_side,
+                right_side,
+                yaw_error)) {
+            return false;
+        }
+
+        corridor_straight_after_cancel_ = true;
+        corridor_straight_target_yaw_ = target_yaw;
+        corridor_straight_reason_ = reason;
+        pre_goal_turn_after_cancel_ = false;
+        pre_goal_turn_reason_.clear();
+        canceling_goal_ = true;
+
+        geometry_msgs::msg::Twist stop;
+        for (int i = 0; i < 3; ++i) {
+            escape_cmd_pub_->publish(stop);
+        }
+
+        nav_client_->async_cancel_goal(active_goal_handle_);
+
+        RCLCPP_WARN(
+            this->get_logger(),
+            "좁은 통로 직진을 위해 active goal 취소: linear=%.3f, angular=%.3f, front=%.2f, side=(%.2f, %.2f), yaw_error=%.2f, reason=%s",
+            linear_speed,
+            angular_speed,
+            front_clearance,
+            left_side,
+            right_side,
+            yaw_error,
+            reason.c_str()
+        );
+
+        return true;
+    }
+
     bool cancelActiveGoalForPreTurn(double target_yaw, const std::string& reason)
     {
         if (!active_goal_handle_ || canceling_goal_) {
@@ -677,6 +913,8 @@ private:
         pre_goal_turn_after_cancel_ = true;
         pre_goal_turn_target_yaw_ = target_yaw;
         pre_goal_turn_reason_ = reason;
+        corridor_straight_after_cancel_ = false;
+        corridor_straight_reason_.clear();
         canceling_goal_ = true;
 
         geometry_msgs::msg::Twist stop;
@@ -2339,6 +2577,14 @@ private:
             return true;
         }
 
+        if (startCorridorStraightTowardGridPath(
+                latest_map_,
+                next_goal.pose.position.x,
+                next_goal.pose.position.y,
+                "new goal path tangent is straight corridor")) {
+            return true;
+        }
+
         if (startFastTurnTowardGridPath(
                 latest_map_,
                 next_goal.pose.position.x,
@@ -3115,6 +3361,8 @@ private:
     {
         pre_goal_turn_after_cancel_ = false;
         pre_goal_turn_reason_.clear();
+        corridor_straight_after_cancel_ = false;
+        corridor_straight_reason_.clear();
         addRejectedGoalPoint(current_goal_x_, current_goal_y_, BLACKLIST_TTL_CANCEL);
         addDeadZoneAtRobotPose("goal canceled near robot pose");
         canceling_goal_ = true;
@@ -4651,13 +4899,24 @@ private:
             std::hypot(current_goal_x_ - robot_x_, current_goal_y_ - robot_y_);
         const double no_progress_time =
             (this->now() - last_progress_time_).seconds();
+        const bool no_goal_distance_progress =
+            goal_distance + STUCK_GOAL_IMPROVEMENT >= best_goal_distance_;
         double plan_target_yaw = 0.0;
         double plan_target_distance = 0.0;
 
         if (latestPlanTangentYaw(plan_target_yaw, plan_target_distance)) {
             const double plan_yaw_error = normalizeAngle(plan_target_yaw - robot_yaw_);
 
+            if (no_goal_distance_progress &&
+                no_progress_time >= CORRIDOR_STRAIGHT_STALL_TIME &&
+                cancelActiveGoalForCorridorStraight(
+                    plan_target_yaw,
+                    "active plan tangent is straight corridor")) {
+                return;
+            }
+
             if (std::abs(plan_yaw_error) >= PRE_GOAL_TURN_ANGLE &&
+                no_goal_distance_progress &&
                 no_progress_time >= ACTIVE_GOAL_PRE_TURN_STALL &&
                 cancelActiveGoalForPreTurn(
                     plan_target_yaw,
@@ -4795,7 +5054,13 @@ private:
                 continue_reason = "goal succeeded";
             }
         } else if (canceling_goal_) {
-            if (pre_goal_turn_after_cancel_) {
+            if (corridor_straight_after_cancel_) {
+                RCLCPP_WARN(
+                    this->get_logger(),
+                    "좁은 통로 직진 처리를 위한 목표 취소 완료. blacklist 없이 직진 override로 전환합니다"
+                );
+                continue_reason = corridor_straight_reason_;
+            } else if (pre_goal_turn_after_cancel_) {
                 RCLCPP_WARN(
                     this->get_logger(),
                     "선회 우선 처리를 위한 목표 취소 완료. blacklist 없이 제자리 회전으로 전환합니다"
@@ -4836,6 +5101,17 @@ private:
         active_goal_handle_.reset();
         canceling_goal_ = false;
         goal_in_progress_ = false;
+
+        if (corridor_straight_after_cancel_) {
+            const double straight_yaw = corridor_straight_target_yaw_;
+            const std::string straight_reason = corridor_straight_reason_;
+            corridor_straight_after_cancel_ = false;
+            corridor_straight_reason_.clear();
+
+            if (startCorridorStraightToYaw(straight_yaw, straight_reason)) {
+                return;
+            }
+        }
 
         if (pre_goal_turn_after_cancel_) {
             const double turn_yaw = pre_goal_turn_target_yaw_;
